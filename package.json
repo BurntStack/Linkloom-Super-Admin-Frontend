@@ -1,10 +1,21 @@
 {
   "name": "linkloom-super-admin-frontend",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "Linkloom Super Admin console (front end)",
+  "type": "module",
+  "description": "Linkloom Super Admin console (React front end)",
   "scripts": {
-    "dev": "npx --yes serve@14 -l 5173 .",
-    "start": "npx --yes serve@14 -l 5173 ."
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "gsap": "3.12.5",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.7.0",
+    "vite": "^5.4.21"
   }
 }

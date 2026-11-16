@@ -1,0 +1,7 @@
+/* page base the design was built on: safe-area padding on the root (core.css paints the top inset) */
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+/* the React root adds no box of its own */
+#root{display:contents}
+.bell{position:relative}
+.bell-n{position:absolute;top:-2px;right:-2px;min-width:18px;height:18px;padding:0 5px;border-radius:999px;display:grid;place-items:center;background:var(--self);color:var(--ll-ink-text);font-size:11px;font-weight:700;line-height:1}

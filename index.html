@@ -9,86 +9,10 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Faculty+Glyphic&family=Figtree:wght@400;500;600;700&family=Mynerve&display=swap">
-<link rel="stylesheet" href="core.css">
-<link rel="stylesheet" href="motion.css">
-<link rel="stylesheet" href="screens/auth.css"><link rel="stylesheet" href="screens/home.css"><link rel="stylesheet" href="screens/security.css"><link rel="stylesheet" href="screens/audit.css">
-<link rel="stylesheet" href="screens/verify.css"><link rel="stylesheet" href="screens/accounts.css">
-<link rel="stylesheet" href="screens/marketplace.css"><link rel="stylesheet" href="screens/moderation.css">
-<link rel="stylesheet" href="screens/orders.css"><link rel="stylesheet" href="screens/finance.css">
 <link rel="icon" href="assets/logo-mark.svg" type="image/svg+xml">
-<style>
-/* page base the design was built on: safe-area padding on the root (core.css paints the top inset) */
-:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
-html{scroll-padding-top:env(safe-area-inset-top,0px)}
-</style>
-<style>
-.bell{position:relative}
-.bell-n{position:absolute;top:-2px;right:-2px;min-width:18px;height:18px;padding:0 5px;border-radius:999px;display:grid;place-items:center;background:var(--self);color:var(--ll-ink-text);font-size:11px;font-weight:700;line-height:1}
-</style>
 </head>
 <body>
-<a class="skip" href="#view" data-skip>Skip to content</a>
-<div id="app" class="app">
-  <aside class="side" aria-label="Main">
-    <a class="sbox brand" href="#home" aria-label="Linkloom admin home"><img src="assets/logo-mark.svg" width="28" height="28" alt=""><span>linkloom</span></a>
-    <div class="sbox nav-box">
-      <nav class="nav" aria-label="Sections">
-        <a href="#home" data-nav="home">Command</a>
-        <a href="#verify" data-nav="verify">Verification <span class="badge" data-badge="verify" hidden></span></a>
-        <a href="#accounts" data-nav="accounts">Accounts</a>
-        <a href="#marketplace" data-nav="marketplace">Marketplace</a>
-        <a href="#moderation" data-nav="moderation">Moderation <span class="badge" data-badge="moderation" hidden></span></a>
-        <a href="#orders" data-nav="orders">Orders &amp; escrow <span class="badge" data-badge="orders" hidden></span></a>
-        <a href="#finance" data-nav="finance">Financials</a>
-        <a href="#audit" data-nav="audit">Audit log</a>
-      </nav>
-      <p class="nav-note">Admin console · every action is logged</p>
-    </div>
-    <a class="sbox slipbox" href="#orders">
-      <span class="t-cap slip-l">Escrow balance</span>
-      <span class="t-money t-money-m" data-side-held></span>
-      <span class="pill pill-escrow" data-side-live></span>
-      <span class="slip-plan" data-side-audit></span>
-    </a>
-    <a class="sbox me" href="#security" data-nav="security"><span class="avatar" data-me-initials></span><span class="me-t"><b data-me-name></b><span data-me-handle></span></span></a>
-  </aside>
-
-  <div class="main">
-    <header class="top">
-      <a class="hbox hlogo" href="#home" aria-label="Linkloom admin home"><img src="assets/logo-mark.svg" width="26" height="26" alt=""><span>linkloom</span></a>
-      <div class="grow"></div>
-      <div class="hbox icons">
-        <a class="ibtn bell" href="#audit" aria-label="Audit log" data-ic="shield"></a>
-        <button class="ibtn bell" type="button" id="bell" aria-label="Alerts" data-ic="bell"><span class="bell-n" data-badge="bell" hidden></span></button>
-        <a class="avatar" href="#security" aria-label="Your admin account" data-me-initials></a>
-      </div>
-    </header>
-    <main class="view light" id="view" tabindex="-1"></main>
-  </div>
-
-  <nav class="tabbar dark" aria-label="Sections">
-    <a href="#home" data-nav="home" data-ic="home">Command</a>
-    <a href="#verify" data-nav="verify" data-ic="verified">Verify</a>
-    <a href="#accounts" data-nav="accounts" data-ic="users">Accounts</a>
-    <a href="#orders" data-nav="orders" data-ic="lock">Escrow</a>
-    <a href="#audit" data-nav="audit" data-ic="shield">Audit</a>
-  </nav>
-</div>
-<div id="focusRoot" hidden></div>
-
-<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js" integrity="sha512-7eHRwcbYkK4d9g/6tD/mhkf++eoTHwpNM9woBxtPUBWm67zeAfFC+HrdoE2GanKeocly/VxeLvIqwvCdk7qScg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js" integrity="sha512-onMTRKJBKz8M1TnqqDuGBlowlH0ohFzMXYRNebz+yOcc5TQr/zAKsthzhuv0hiyUKEiQEQXEynnXCvNTOk50dg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-<script src="data.js"></script>
-<script>/* secure console: start signed out unless this tab already passed password + MFA */
-try { if (!sessionStorage.getItem("ll-admin-in")) window.LLD_DATA.session.signedIn = false; } catch (e) { window.LLD_DATA.session.signedIn = false; }</script>
-<script src="core.js"></script>
-<script src="ui-select.js"></script>
-<script src="motion.js"></script>
-<script src="screens/auth.js"></script><script src="screens/home.js"></script><script src="screens/security.js"></script><script src="screens/audit.js"></script>
-<script src="screens/verify.js"></script><script src="screens/accounts.js"></script>
-<script src="screens/marketplace.js"></script><script src="screens/moderation.js"></script>
-<script src="screens/orders.js"></script><script src="screens/finance.js"></script>
-<script>window.LLD.boot();
-window.LLD.store.on(function () { try { if (window.LLD_DATA.session.signedIn) sessionStorage.setItem("ll-admin-in", "1"); else sessionStorage.removeItem("ll-admin-in"); } catch (e) {} });</script>
+<div id="root"></div>
+<script type="module" src="/src/main.jsx"></script>
 </body>
 </html>

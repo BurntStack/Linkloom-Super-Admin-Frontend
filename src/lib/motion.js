@@ -9,10 +9,11 @@
    - no layout shift (numbers change in place), nothing blocks input, nothing is left behind,
    - prefers-reduced-motion is read live: a short fade or nothing, and every Promise still resolves,
    - the ui-select dropdown animates itself; this file leaves it alone (NOMO). */
+import gsap from 'gsap';
+import LLD from './core.js';
+
 (() => {
-  const LLD = window.LLD;
-  if (!LLD || !LLD.motion) return;
-  const G = window.gsap || null;
+  const G = gsap || null;
   const doc = document, root = doc.documentElement;
   const mRM = matchMedia('(prefers-reduced-motion: reduce)'), mFine = matchMedia('(hover: hover) and (pointer: fine)'), mPhone = matchMedia('(max-width: 900px)');
   const RM = () => mRM.matches;

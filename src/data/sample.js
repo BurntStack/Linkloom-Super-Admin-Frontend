@@ -2,7 +2,7 @@
    Same sample world as the creator app (Ananya Iyer) and the brand app (Mirevo Skincare, Meera Kapoor); the new
    accounts from sign-up (Priya Shah, creator; Rohan Mehta of Salt & Soil Foods, brand) wait in the verification desk.
    Business model: subscriptions. Commission rate is 0% (no per-deal fee); the payment-gateway fee is a platform cost. */
-window.LLD_DATA = {
+const data = {
   session: { signedIn: true, mfa: true, since: '2026-11-04T09:58:00+05:30' },
   me: { name: 'Kavya Menon', role: 'Super admin', email: 'kavya@linkloom.in', city: 'Bengaluru', photo: null },
   rules: { commissionPct: 0, gatewayPct: 2, gatewayNote: 'Gateway fee is paid by Linkloom, never by brands or creators.' },
@@ -157,3 +157,5 @@ window.LLD_DATA = {
   ],
   ui: {}
 };
+
+export default data;

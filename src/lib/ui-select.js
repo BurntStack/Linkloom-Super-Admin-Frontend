@@ -3,8 +3,9 @@
    (ARIA select-only combobox). The native <select> stays the source of truth: its value changes and it fires
    input + change, so screen code needs no changes. On coarse pointers (phones) the native picker is kept.
    Opt out with data-native on the select. */
+import L from './core.js';
+
 (() => {
-  const L = window.LLD; if (!L) return;
   const doc = document, coarse = matchMedia('(pointer:coarse)'), RMq = matchMedia('(prefers-reduced-motion: reduce)');
   const proto = HTMLSelectElement.prototype;
   const dVal = Object.getOwnPropertyDescriptor(proto, 'value'), dIdx = Object.getOwnPropertyDescriptor(proto, 'selectedIndex');
@@ -12,8 +13,9 @@
 
   function enhance(sel) {
     if (sel._ui || sel.multiple || sel.hasAttribute('data-native') || sel.size > 1) return;
-    const wrap = doc.createElement('span'); wrap.className = 'ui-sel';
-    sel.parentNode.insertBefore(wrap, sel); wrap.append(sel);
+    /* a React <Select> renders its own .ui-sel wrapper (React must keep owning the <select>'s place in the tree) */
+    let wrap = sel.parentNode;
+    if (!wrap.classList.contains('ui-sel')) { wrap = doc.createElement('span'); wrap.className = 'ui-sel'; sel.parentNode.insertBefore(wrap, sel); wrap.append(sel); }
     wrap.insertAdjacentHTML('beforeend', `<span class="ui-sel-ch" aria-hidden="true">${L.icon('down')}</span>`);
     const inst = { sel, wrap, custom: !coarse.matches };
     sel._ui = inst;
