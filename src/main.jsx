@@ -16,7 +16,6 @@ import './styles/screens/finance.css';
 import './styles/shell.css';
 
 import L, { data, store } from './lib/core.js';
-import './legacy/globals.js';
 import './lib/ui-select.js';
 import './lib/motion.js';
 import './screens/index.js';

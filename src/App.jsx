@@ -13,20 +13,14 @@ function Outlet({ route }) {
   const ref = useRef(null);
   useLayoutEffect(() => {
     const el = ref.current;
-    let cleanup = null;
-    if (!view.Component) {            // a screen that still draws itself (not yet a component)
-      try { cleanup = view.render(el, param) || null; } catch (e) { console.error(e); el.innerHTML = '<div class="empty"><p class="t-h2">This screen could not load.</p><p class="muted">Reload the page to try again.</p></div>'; }
-      L.liquid(el);
-    }
     document.title = (view.title ? (typeof view.title === 'function' ? view.title(param) : view.title) + ' · ' : '') + 'Linkloom';
     if (!focus) window.scrollTo({ top: 0, behavior: 'auto' });
     if (routed) el.focus({ preventScroll: true });
     routed = true;
     L.motion.enter(el, { name });
-    return () => { if (cleanup) { try { cleanup(); } catch (e) {} } };
   }, []);
   const C = view.Component;
-  const body = C ? <C param={param} /> : null;
+  const body = <C param={param} />;
   return focus
     ? <div id="focusRoot" tabIndex={-1} ref={ref}>{body}</div>
     : <main className="view light" id="view" tabIndex={-1} ref={ref}>{body}</main>;

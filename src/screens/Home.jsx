@@ -209,5 +209,4 @@ export default function Home() {
   );
 }
 
-L.vFlags = L.vFlags || vFlags;
 L.register('home', { title: 'Command', nav: 'home', Component: Home });

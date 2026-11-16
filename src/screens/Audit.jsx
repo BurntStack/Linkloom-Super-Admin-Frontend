@@ -183,5 +183,4 @@ export default function Audit() {
   );
 }
 
-L.auditLabel = auditLabel;
 L.register('audit', { title: 'Audit log', nav: 'audit', Component: Audit });

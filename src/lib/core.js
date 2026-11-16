@@ -93,16 +93,14 @@ const verifyAudit = () => { let prev = '00000000'; for (const e of LLD_DATA.audi
 const initials = n => (String(n || '').trim()[0] || '?').toUpperCase();
 
 /* ---------- overlays ---------- */
-/* A sheet is plain DOM on <body> (the motion layer watches for it). Its body can be an HTML string, a node or a
-   React element (or a function ({ el, close }) => element); a React body is rendered by <SheetHost> through a portal,
-   before the sheet is attached. */
+/* A sheet is plain DOM on <body> (the motion layer watches for it). Its body is a React element, or a function
+   ({ el, close }) => element; <SheetHost> renders it through a portal before the sheet is attached. */
 let sheetEl = null, scrimEl = null, lastFocus = null, sheetKey = 0;
 let portals = [];
 const portalSubs = new Set();
 const setPortals = next => { portals = next; portalSubs.forEach(f => f()); };
 const sheets = { get list() { return portals; }, on(f) { portalSubs.add(f); return () => portalSubs.delete(f); } };
-const isReact = b => !!b && typeof b === 'object' && !b.nodeType && '$$typeof' in b;
-function openSheet({ title, body, onMount, wide }) {
+function openSheet({ title, body, wide }) {
   closeSheet(true);
   lastFocus = document.activeElement;
   scrimEl = document.createElement('div'); scrimEl.className = 'scrim'; scrimEl.addEventListener('click', () => closeSheet());
@@ -111,18 +109,14 @@ function openSheet({ title, body, onMount, wide }) {
   $('#app').inert = true; $('#focusRoot').inert = true;
   sheetEl.innerHTML = `<div class="sheet-h"><p class="t-h2">${esc(title)}</p><button class="ibtn" type="button" data-close aria-label="Close">${icon('close')}</button></div><div class="sheet-b"></div>`;
   const b = $('.sheet-b', sheetEl);
-  if (typeof body === 'function') body = body({ el: b, close: closeSheet });   // a React body that wants the sheet's element
-  if (isReact(body)) {
-    const key = ++sheetKey; sheetEl._key = key;
-    const add = () => setPortals([...portals, { key, el: b, node: body }]);
-    try { flushSync(add); } catch (e) { add(); }
-  } else if (typeof body === 'string') b.innerHTML = body; else if (body) b.append(body);
+  if (typeof body === 'function') body = body({ el: b, close: closeSheet });   // a body that wants the sheet's element
+  const key = ++sheetKey; sheetEl._key = key;
+  const add = () => setPortals([...portals, { key, el: b, node: body }]);
+  try { flushSync(add); } catch (e) { add(); }
   document.body.append(scrimEl, sheetEl);
   $('[data-close]', sheetEl).addEventListener('click', () => closeSheet());
   sheetEl.addEventListener('keydown', e => { if (e.key === 'Escape') closeSheet(); });
   requestAnimationFrame(() => { scrimEl && scrimEl.classList.add('on'); sheetEl && sheetEl.classList.add('on'); const f = $('input,button:not([data-close]),select,textarea,a', b) || (sheetEl && $('[data-close]', sheetEl)); f && f.focus({ preventScroll: true }); });
-  liquid(sheetEl);
-  onMount && onMount(b, closeSheet);
   return { el: b, close: closeSheet };
 }
 function closeSheet(instant) {
@@ -139,15 +133,6 @@ function toast(msg, ic = 'check') {
   let t = $('.toast'); if (!t) { t = document.createElement('div'); t.className = 'toast'; t.setAttribute('role', 'status'); document.body.append(t); }
   t.innerHTML = `${icon(ic)}<span>${esc(msg)}</span>`; t.querySelector('svg').style.cssText = 'width:18px;height:18px';
   requestAnimationFrame(() => t.classList.add('on')); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('on'), 3200);
-}
-
-/* liquid buttons: <a class="lq lq-p">Label</a> -> label roll markup */
-function liquid(root = document) {
-  $$('.lq', root).forEach(b => {
-    if (b.querySelector(':scope > .t')) return;
-    const label = b.innerHTML.trim();
-    b.innerHTML = `<span class="t">${label}</span><span class="t2" aria-hidden="true">${label}</span>`;
-  });
 }
 
 /* ---------- icons (24px grid, 1.8 stroke, round caps) ---------- */
@@ -194,7 +179,7 @@ function icon(n, cls = '') {
 const motion = { enter() {}, stagger() {}, count(el, to, fmt) { if (el) el.textContent = fmt ? fmt(to) : to; }, press() {}, swipe() { return () => {}; }, reveal() {}, celebrate() {}, flip(fn) { fn && fn(); } };
 
 Object.assign(LLD, { RM, $, $$, esc, inr, rupees, compact, payout, FEE_EXAMPLE, fmtDate, daysLeft, ago, ageFrom, D, store, register, go, route, views, router, chrome, sheets,
-  current: () => current, escrowHeld, liveOrders, creator, brand, audit, verifyAudit, openSheet, closeSheet, toast, liquid, icon, iconPath: n => P[n] || P.info, initials, motion,
+  current: () => current, escrowHeld, liveOrders, creator, brand, audit, verifyAudit, openSheet, closeSheet, toast, icon, iconPath: n => P[n] || P.info, initials, motion,
   today: () => new Date('2026-11-04T10:42:00+05:30') });
 
 LLD.boot = () => {

@@ -21,7 +21,7 @@ const mmss = s => Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
 const maskEmail = e => { const [u, d] = String(e).split('@'); return d ? u.slice(0, 2) + '••••@' + d : e; };
 
 /* ---------- shared: confirm sheet for destructive admin actions ----------
-   adminConfirm({ title, lead, verb, action, target, reasons:[...], tone:'danger'|'plain', onConfirm(reason) → detail?, after() })
+   adminConfirm({ title, lead (node), verb, action, target, reasons:[...], tone:'danger'|'plain', onConfirm(reason) → detail?, after() })
    It always asks for a reason, says the action will be logged, calls L.audit(action, target, detail) and toasts "Logged to audit". */
 function ConfirmForm({ o, close }) {
   const reasons = o.reasons || [];
@@ -44,7 +44,7 @@ function ConfirmForm({ o, close }) {
   };
   return (
     <form className="auth-cf" noValidate onSubmit={submit}>
-      {o.lead ? (typeof o.lead === 'string' ? <div className="auth-cf-lead" dangerouslySetInnerHTML={{ __html: o.lead }} /> : <div className="auth-cf-lead">{o.lead}</div>) : null}
+      {o.lead ? <div className="auth-cf-lead">{o.lead}</div> : null}
       {reasons.length ? <div className="field"><span className="lab" id="auth-cf-rl">Common reasons</span><div className="chips" role="group" aria-labelledby="auth-cf-rl">{reasons.map((r, i) => <button key={i} className="chip" type="button" data-r="" aria-pressed={picked === i} onClick={() => pick(r, i)}>{r}</button>)}</div></div> : null}
       <div className={'field' + (err ? ' is-err' : '')} data-f="why"><label htmlFor="auth-cf-why">Reason <span className="muted">(required)</span></label>
         <textarea className="textarea" id="auth-cf-why" maxLength={240} aria-describedby="auth-cf-h auth-cf-e" aria-invalid={err ? 'true' : undefined} placeholder="Say what you saw. Another admin should understand it without asking you." ref={ta} onInput={upd}></textarea>
@@ -296,6 +296,4 @@ function Login({ param }) {
   );
 }
 
-L.adminConfirm = adminConfirm;
-L.adminAuth = { signOut, SAMPLE };
 L.register('login', { title: 'Admin sign-in', shell: 'focus', auth: false, Component: Login });
