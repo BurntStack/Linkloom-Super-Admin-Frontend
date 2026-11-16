@@ -2,7 +2,7 @@
 import '../legacy/auth.js';
 import '../legacy/home.js';
 import '../legacy/security.js';
-import '../legacy/audit.js';
+import './Audit.jsx';
 import '../legacy/verify.js';
 import '../legacy/accounts.js';
 import '../legacy/marketplace.js';
