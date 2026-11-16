@@ -5,3 +5,6 @@ html{scroll-padding-top:env(safe-area-inset-top,0px)}
 #root{display:contents}
 .bell{position:relative}
 .bell-n{position:absolute;top:-2px;right:-2px;min-width:18px;height:18px;padding:0 5px;border-radius:999px;display:grid;place-items:center;background:var(--self);color:var(--ll-ink-text);font-size:11px;font-weight:700;line-height:1}
+/* The original screens redrew whole regions, so the browser never scroll-anchored on their content. Components keep
+   their nodes; .no-anchor on a region keeps scrolling (and the FLIP animations that measure around it) the same. */
+.no-anchor{overflow-anchor:none}

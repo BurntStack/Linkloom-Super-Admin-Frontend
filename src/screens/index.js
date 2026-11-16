@@ -1,7 +1,7 @@
 /* Screen registry. Order matters while some screens are still the original modules (they share helpers). */
-import '../legacy/auth.js';
+import './Auth.jsx';
 import '../legacy/home.js';
-import '../legacy/security.js';
+import './Security.jsx';
 import './Audit.jsx';
 import '../legacy/verify.js';
 import '../legacy/accounts.js';

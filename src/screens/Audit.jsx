@@ -136,7 +136,7 @@ export default function Audit() {
   };
 
   return (
-    <div className="view-in audit" ref={root}>
+    <div className="view-in audit no-anchor" ref={root}>
       <header className="page-h">
         <div className="t"><p className="t-eyebrow">Platform financials &amp; audit</p><h1 className="t-h1">Audit log</h1>
           <p className="muted audit-lede">Every admin action is written here with a reason, sealed and chained to the one before. Nothing can be edited or deleted, by anyone. <span className="sample">Sample data</span></p></div>
