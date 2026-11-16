@@ -8,4 +8,4 @@ import '../legacy/accounts.js';
 import '../legacy/marketplace.js';
 import '../legacy/moderation.js';
 import '../legacy/orders.js';
-import '../legacy/finance.js';
+import './Finance.jsx';
