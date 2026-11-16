@@ -94,7 +94,8 @@ const initials = n => (String(n || '').trim()[0] || '?').toUpperCase();
 
 /* ---------- overlays ---------- */
 /* A sheet is plain DOM on <body> (the motion layer watches for it). Its body can be an HTML string, a node or a
-   React element; a React body is rendered by <SheetHost> through a portal, before the sheet is attached. */
+   React element (or a function ({ el, close }) => element); a React body is rendered by <SheetHost> through a portal,
+   before the sheet is attached. */
 let sheetEl = null, scrimEl = null, lastFocus = null, sheetKey = 0;
 let portals = [];
 const portalSubs = new Set();
@@ -110,6 +111,7 @@ function openSheet({ title, body, onMount, wide }) {
   $('#app').inert = true; $('#focusRoot').inert = true;
   sheetEl.innerHTML = `<div class="sheet-h"><p class="t-h2">${esc(title)}</p><button class="ibtn" type="button" data-close aria-label="Close">${icon('close')}</button></div><div class="sheet-b"></div>`;
   const b = $('.sheet-b', sheetEl);
+  if (typeof body === 'function') body = body({ el: b, close: closeSheet });   // a React body that wants the sheet's element
   if (isReact(body)) {
     const key = ++sheetKey; sheetEl._key = key;
     const add = () => setPortals([...portals, { key, el: b, node: body }]);

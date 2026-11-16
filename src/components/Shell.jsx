@@ -2,6 +2,7 @@
 import L from '../lib/core.js';
 import { useStore } from '../lib/hooks.js';
 import Icon from './Icon.jsx';
+import { openAlerts } from './AlertsSheet.jsx';
 
 const cur = (nav, key) => (nav === key ? { 'aria-current': 'page' } : {});
 const Badge = ({ n }) => <span className="badge" hidden={!n}>{n}</span>;
@@ -47,7 +48,7 @@ export function TopBar() {
       <div className="grow"></div>
       <div className="hbox icons">
         <a className="ibtn bell" href="#audit" aria-label="Audit log"><Icon n="shield" /></a>
-        <button className="ibtn bell" type="button" id="bell" aria-haspopup="dialog" aria-label={c.bell ? `Alerts, ${c.bell} unread` : 'Alerts'} onClick={() => L.openAlerts && L.openAlerts()}>
+        <button className="ibtn bell" type="button" id="bell" aria-haspopup="dialog" aria-label={c.bell ? `Alerts, ${c.bell} unread` : 'Alerts'} onClick={openAlerts}>
           <Icon n="bell" /><span className="bell-n" hidden={!c.bell}>{c.bell}</span>
         </button>
         <a className="avatar" href="#security" aria-label="Your admin account" data-me-initials="">{L.initials(s.me.name)}</a>
