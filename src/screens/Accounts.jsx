@@ -2,11 +2,12 @@
    List: search, Creators / Brands, status and quick filters. Creator detail: badges, category tags, featured, reports, suspend or reactivate,
    password-reset help, sign out of devices. Brand detail: business mail, company registration, campaign posting frequency (30 days vs usual).
    Every change is logged with L.audit; destructive ones go through the confirm sheet in lib/adm.jsx. Classes are .acc-*. */
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
-import L, { data } from '../lib/core.js';
+import L, { data, store } from '../lib/core.js';
 import { mo } from '../lib/mo.js';
 import { useRerender } from '../lib/hooks.js';
+import { LIVE, live, ensureLive, retryLive, fetchCreator } from '../lib/live.js';
 import { confirm, mask, mailMask, freeMail, gstState, Av, LogLine } from '../lib/adm.jsx';
 import Icon from '../components/Icon.jsx';
 import Lq from '../components/Lq.jsx';
@@ -38,6 +39,17 @@ const QF = {
   creator: [['pro', 'Verified Pro', c => c.badges.includes('Verified Pro')], ['feat', 'Featured', c => c.featured], ['kyc', 'KYC not done', c => c.kyc !== 'verified'], ['rep', 'Has reports', c => c.reports > 0]],
   brand: [['ver', 'Verified', b => b.verify === 'verified'], ['unv', 'Not verified', b => b.verify !== 'verified'], ['spike', 'Posting spike', spike], ['rep', 'Has reports', b => b.reports > 0]]
 };
+/* live creators carry only what the public API returns: verified or not, no badges, reports or status */
+const LIVE_QF = [['ver', 'Verified', c => c.verified], ['unv', 'Not verified', c => !c.verified]];
+const LiveRow = ({ c }) => (
+  <li><a className="acc-row" href={`#creator-${c.id}`}>
+    <Av kind="creator" name={c.name} />
+    <span className="acc-id"><b>{c.name}</b><span>{(c.handle ? c.handle + ' · ' : '') + c.city}</span></span>
+    <span className="acc-tags">{c.tags.slice(0, 2).map(t => <span className="pill pill-line" key={t}>{t}</span>)}</span>
+    <span className="acc-n"><b className="t-money">{c.followers ? L.compact(c.followers) : '—'}</b><span>followers</span></span>
+    <span className="acc-k">{c.verified ? <span className="pill pill-ok"><Icon n="check" />Verified</span> : <span className="pill pill-paper"><Icon n="minus" />Not verified</span>}</span>
+    <span className="acc-s"></span><span className="acc-go"><Icon n="chevron" /></span></a></li>
+);
 const CRow = ({ c }) => (
   <li><a className="acc-row" href={`#creator-${c.id}`}>
     <Av kind="creator" name={c.name} />
@@ -62,14 +74,20 @@ function List() {
   const rerender = useRerender();
   const s = S(), u = ui();
   const [head] = useState(() => ({ creators: s.creators.length, brands: s.brands.length, susp: [...s.creators, ...s.brands].filter(a => a.status === 'suspended').length }));
-  useLayoutEffect(() => { mo('stagger', [...root.current.querySelectorAll('.acc-row')]); }, []);
+  /* creators come from the live API when it answers; brands have no endpoint yet and stay sample data */
+  const lv = live();
+  const isCreators = u.tab === 'creator';
+  const liveOn = LIVE && isCreators && lv.status === 'ready', loading = LIVE && isCreators && lv.status === 'loading', failed = LIVE && isCreators && lv.status === 'failed';
+  useEffect(() => { ensureLive(); return store.on(why => { if (why === 'live') rerender(); }); }, []);
+  useLayoutEffect(() => { mo('stagger', [...root.current.querySelectorAll('.acc-row')]); }, [lv.status]);
 
   const q = u.q.trim().toLowerCase();
-  const src = u.tab === 'creator' ? s.creators : s.brands;
-  const fs = QF[u.tab].filter(([k]) => u.f.includes(k));
-  const rows = src.filter(a => (u.status === 'all' || a.status === u.status) && fs.every(([, , fn]) => fn(a)) &&
+  const src = liveOn ? lv.creators : isCreators ? s.creators : s.brands;
+  const qf = liveOn ? LIVE_QF : QF[u.tab];
+  const fs = qf.filter(([k]) => u.f.includes(k));
+  const rows = loading ? [] : src.filter(a => (liveOn || u.status === 'all' || a.status === u.status) && fs.every(([, , fn]) => fn(a)) &&
     (!q || [a.name, a.handle, a.city, a.contact, a.gstin, a.email].some(x => x && String(x).toLowerCase().includes(q))));
-  const dirty = u.q || u.status !== 'all' || u.f.length;
+  const dirty = u.q || (!liveOn && u.status !== 'all') || fs.length;
 
   const set = fn => () => { fn(); flushSync(rerender); };
   const setTab = k => set(() => { u.tab = k; u.f = []; });
@@ -81,7 +99,9 @@ function List() {
     <div className="view-in acc" ref={root}>
       <header className="page-h acc-head">
         <div className="t"><p className="t-eyebrow">Accounts</p><h1 className="t-h1">People and brands on Linkloom</h1>
-          <p className="muted">{`${head.creators} creators and ${head.brands} brands${head.susp ? `, ${head.susp} suspended` : ''}. Changes here are logged. `}<span className="sample">Sample data</span></p></div>
+          {LIVE && lv.status === 'ready'
+            ? <p className="muted">{`${lv.creators.length} creators from the live Linkloom API and ${head.brands} sample brands. `}<span className="sample">Creators: live, read only · Brands: sample data</span></p>
+            : <p className="muted">{`${head.creators} creators and ${head.brands} brands${head.susp ? `, ${head.susp} suspended` : ''}. Changes here are logged. `}<span className="sample">Sample data</span></p>}</div>
         <div className="acc-search"><Icon n="search" /><label className="sr-only" htmlFor="accQ">Search accounts</label>
           <input className="input" id="accQ" type="search" autoComplete="off" spellCheck="false" placeholder="Name, @handle, city or GSTIN" defaultValue={u.q} ref={search} onInput={e => { u.q = e.currentTarget.value; rerender(); }} /></div>
       </header>
@@ -90,12 +110,14 @@ function List() {
           <button type="button" data-tab="creator" aria-pressed={u.tab === 'creator'} onClick={setTab('creator')}><i className="dot acc-dot-c"></i>Creators</button>
           <button type="button" data-tab="brand" aria-pressed={u.tab === 'brand'} onClick={setTab('brand')}><i className="dot acc-dot-b"></i>Brands</button>
         </div>
-        <div className="chips acc-st" role="group" aria-label="Status">{[['all', 'Any status'], ['active', 'Active'], ['suspended', 'Suspended']].map(([k, t]) => <button className="chip" type="button" data-st={k} aria-pressed={u.status === k} key={k} onClick={setStatus(k)}>{t}</button>)}</div>
-        <div className="chips acc-qf no-anchor" role="group" aria-label="Filters" id="accQf">{QF[u.tab].map(([k, t]) => <button className="chip" type="button" data-f={k} aria-pressed={u.f.includes(k)} key={u.tab + k} onClick={toggle(k)}>{t}</button>)}</div>
+        <div className="chips acc-st" role="group" aria-label="Status" hidden={liveOn}>{[['all', 'Any status'], ['active', 'Active'], ['suspended', 'Suspended']].map(([k, t]) => <button className="chip" type="button" data-st={k} aria-pressed={u.status === k} key={k} onClick={setStatus(k)}>{t}</button>)}</div>
+        <div className="chips acc-qf no-anchor" role="group" aria-label="Filters" id="accQf">{qf.map(([k, t]) => <button className="chip" type="button" data-f={k} aria-pressed={u.f.includes(k)} key={(liveOn ? 'live' : u.tab) + k} onClick={toggle(k)}>{t}</button>)}</div>
       </div>
-      <div className="acc-count"><p id="accCount" aria-live="polite"><b>{rows.length}</b>{` of ${src.length} ${u.tab === 'creator' ? 'creators' : 'brands'}`}</p><button className="btn-q" type="button" data-clear="" hidden={!dirty} onClick={clear}>Clear filters</button></div>
+      <div className="acc-count"><p id="accCount" aria-live="polite">{loading ? 'Loading creators…' : <><b>{rows.length}</b>{` of ${src.length} ${isCreators ? 'creators' : 'brands'}`}</>}</p><button className="btn-q" type="button" data-clear="" hidden={!dirty} onClick={clear}>Clear filters</button>
+        {failed ? <p>Could not reach the Linkloom API, so these are sample creators. <button className="btn-q" type="button" onClick={retryLive}>Try again</button></p> : null}</div>
       <ul className="acc-list no-anchor" id="accList">
-        {rows.length ? rows.map(a => (u.tab === 'creator' ? <CRow c={a} key={a.id} /> : <BRow b={a} key={a.id} />))
+        {loading ? <li className="empty"><p className="t-h3">Loading creators from the Linkloom API</p><p className="muted">The server can take up to a minute to wake up.</p></li>
+          : rows.length ? rows.map(a => (liveOn ? <LiveRow c={a} key={a.id} /> : isCreators ? <CRow c={a} key={a.id} /> : <BRow b={a} key={a.id} />))
           : <li className="empty"><img src="assets/step-04-orbit.svg" width="160" height="117" alt="" /><p className="t-h3">{`No ${u.tab === 'creator' ? 'creators' : 'brands'} match`}</p><p className="muted">Try another name, or clear the filters.</p></li>}
       </ul>
     </div>
@@ -199,7 +221,7 @@ function CreatorView({ id }) {
   const rerender = useRerender();
   const s = S(), c = L.creator(id);
   useLayoutEffect(() => { if (c) mo('stagger', [...root.current.querySelectorAll('.acc-sec')]); }, []);
-  if (!c) return <Missing kind="creator" />;
+  if (!c) return LIVE ? <LiveCreator id={id} /> : <Missing kind="creator" />;
   ui().tab = 'creator';
   const orders = s.orders.filter(o => o.creator === c.id), live = orders.filter(o => L.liveOrders().includes(o));
   const reps = s.reports.filter(r => String(r.target).includes(c.name));
@@ -268,6 +290,77 @@ function CreatorView({ id }) {
             {orders.length ? <ul className="acc-ord">{orders.slice(0, 5).map(o => <li key={o.id}><a href={`#orders-${o.id}`}><span><b>{o.title}</b><span>{(L.brand(o.brand) || {}).name || ''}</span></span><span className="num">{L.inr(o.amount)}</span></a></li>)}</ul> : <p className="muted">No orders yet.</p>}
           </section>
           <History a={c} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- creator detail, live: the public profile from GET /v1/creators/{id}/, read only ---------- */
+const PLATFORM = { instagram: 'Instagram', youtube: 'YouTube' };
+function LiveCreator({ id }) {
+  const root = useRef(null);
+  const rerender = useRerender();
+  const [got, setGot] = useState({ c: null, done: false });
+  useEffect(() => {
+    ensureLive();
+    let on = true;
+    fetchCreator(id).then(c => on && setGot({ c, done: true }), () => on && setGot({ c: null, done: true }));
+    const off = store.on(why => { if (why === 'live') rerender(); });
+    return () => { on = false; off(); };
+  }, []);
+  const lv = live(), c = got.c || lv.creators.find(x => x.id === id) || null;
+  const shown = !!c;
+  useEffect(() => { if (c) document.title = c.name + ' · Linkloom'; }, [c && c.name]);
+  useLayoutEffect(() => { if (shown) mo('stagger', [...root.current.querySelectorAll('.acc-sec')]); }, [shown]);
+  if (!c) {
+    if (got.done && lv.status !== 'loading') return <Missing kind="creator" />;
+    return <div className="view-in"><div className="empty"><p className="t-h2">Loading this creator</p><p className="muted">Asking the Linkloom API. The server can take up to a minute to wake up.</p></div></div>;
+  }
+  ui().tab = 'creator';
+  const place = [c.city, c.region].filter((x, i, a) => x && x !== '—' && a.indexOf(x) === i).join(', ');
+  return (
+    <div className="view-in acc acc-d" ref={root}>
+      <a className="btn-q acc-back" href="#accounts"><Icon n="back" />Accounts</a>
+      <header className="acc-mast">
+        <Av kind="creator" name={c.name} cls="acc-av" />
+        <div className="acc-mast-t"><p className="acc-kind acc-kind--c"><i className="dot"></i>{'Creator' + (place ? ' · ' + place : '')}</p>
+          <h1 className="t-h1">{c.name}</h1>
+          <p className="acc-mast-m">{c.handle ? <span className="acc-handle">{c.handle}</span> : <span className="muted">No handle yet</span>}{c.verified ? <span className="pill pill-ok"><Icon n="check" />Verified</span> : <span className="pill pill-paper"><Icon n="minus" />Not verified</span>}</p></div>
+      </header>
+      <dl className="acc-band">
+        <div><dt>Followers</dt><dd className="t-money">{c.followers ? L.compact(c.followers) : '—'}</dd><p>{c.followers ? 'across linked platforms' : 'not reported yet'}</p></div>
+        <div><dt>Engagement</dt><dd className="t-money">{c.er != null ? c.er.toFixed(1) + '%' : '—'}</dd><p>{c.er != null ? 'average per post' : 'not reported yet'}</p></div>
+        <div><dt>Rating</dt><dd className="t-money">{c.rating != null ? c.rating.toFixed(1) : '—'}</dd><p>{`${c.reviewCount} review${c.reviewCount === 1 ? '' : 's'}`}</p></div>
+        <div><dt>Starting price</dt><dd className="t-money">{c.startingPrice != null ? L.inr(c.startingPrice) : '—'}</dd><p>{c.startingPrice != null ? 'lowest active package' : 'no active package'}</p></div>
+      </dl>
+      <p className="acc-sample"><span className="sample">Live from the Linkloom API · read only</span></p>
+      <div className="acc-grid">
+        <div className="acc-col">
+          <section className="acc-sec" aria-labelledby="accProf"><h2 className="t-h2" id="accProf">Public profile</h2>
+            {c.bio ? <p className="muted">{c.bio}</p> : null}
+            <dl className="acc-kv">
+              <div><dt>Categories</dt><dd>{c.tags.length ? c.tags.join(', ') : <None t="None chosen" />}</dd></div>
+              <div><dt>Languages</dt><dd>{c.languages.length ? c.languages.join(', ') : <None t="None listed" />}</dd></div>
+              <div><dt>Main platform</dt><dd>{PLATFORM[c.primaryPlatform] || c.primaryPlatform || <None t="Not set" />}</dd></div>
+              {c.platforms.map(p => <div key={p.key}><dt>{PLATFORM[p.key] || p.key}</dt><dd>{p.handle ? '@' + p.handle : <None t="No handle" />}{p.linked ? <span className="acc-m is-ok"><Icon n="check" />Linked by login</span> : <span className="acc-m is-warn"><Icon n="info" />Not linked by login</span>}</dd></div>)}
+              <div><dt>Replies within</dt><dd>{c.repliesWithin || <None t="Not set" />}</dd></div>
+            </dl>
+          </section>
+          <section className="acc-sec" aria-labelledby="accPkg"><h2 className="t-h2" id="accPkg">Packages</h2>
+            {c.packages == null ? <p className="muted">Loading packages.</p>
+              : c.packages.length ? <dl className="acc-kv">{c.packages.map(p => <div key={p.id}><dt>{p.title}</dt><dd>{[PLATFORM[p.platform] || p.platform, p.deliverables, p.deliveryDays != null ? `${p.deliveryDays} days` : '', p.price != null ? L.inr(p.price) : ''].filter(Boolean).join(' · ')}</dd></div>)}</dl>
+              : <p className="muted">No active packages.</p>}
+          </section>
+        </div>
+        <div className="acc-col acc-col--side">
+          <section className="acc-sec acc-card" aria-labelledby="accAct"><h2 className="t-h3" id="accAct">Admin actions</h2>
+            <p className="muted">Suspend, badges, tags, featured, password-reset help and device sign-out are not available for live accounts yet. They need the admin API, which the backend does not have.</p>
+            <p className="muted">Nothing on this page can be changed from here.</p>
+          </section>
+          <section className="acc-sec acc-card" aria-labelledby="accMiss"><h2 className="t-h3" id="accMiss">Not shown yet</h2>
+            <p className="muted">KYC details, orders, reports and reviews need a signed-in admin on the API. Reviews are listed as public in the API guide but currently ask for a sign-in.</p>
+          </section>
         </div>
       </div>
     </div>
@@ -379,5 +472,5 @@ function BrandView({ id }) {
 }
 
 L.register('accounts', { title: 'Accounts', nav: 'accounts', Component: List });
-L.register('creator', { title: id => (L.creator(id) || {}).name || 'Creator', nav: 'accounts', Component: ({ param }) => <CreatorView id={param} /> });
+L.register('creator', { title: id => (L.creator(id) || live().creators.find(c => c.id === id) || {}).name || 'Creator', nav: 'accounts', Component: ({ param }) => <CreatorView id={param} /> });
 L.register('brand', { title: id => (L.brand(id) || {}).name || 'Brand', nav: 'accounts', Component: ({ param }) => <BrandView id={param} /> });

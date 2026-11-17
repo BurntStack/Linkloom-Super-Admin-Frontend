@@ -32,6 +32,20 @@ The sign-in screen (email and password, then a 6-digit authenticator code) is a 
 
 **There is no backend yet.** All data comes from `src/data/sample.js` and lives in memory, so changes reset on reload. Sign-in, MFA, the audit log and every admin action are simulated in the browser and must be replaced with real API calls before this is used with real accounts.
 
+## Live data
+
+Two parts of the console read from the existing Linkloom API; everything else is sample data.
+
+| Screen | Endpoint | Notes |
+|---|---|---|
+| Accounts, creators list | `GET /v1/creators/` | Read only |
+| Accounts, creator page | `GET /v1/creators/{id}/` | Read only; includes packages |
+| Marketplace, campaigns | `GET /v1/campaigns/` | Read only; a guest sees no brand and no brief |
+
+Admin actions on live records are switched off, because the backend has no admin endpoints yet. If the API cannot be reached, those screens fall back to sample data and say so.
+
+The API sends no CORS headers, so the browser calls it through a same-origin `/api` proxy. `vite.config.js` sets that up for `npm run dev` and `npm run preview`, and `vercel.json` does it on Vercel. Any other host needs the same rule: `/api/*` forwarded to the backend. Settings are in `.env.example`; `VITE_LIVE_API=off` runs everything on sample data.
+
 ## Layout
 
 | Path | What it holds |
@@ -42,6 +56,7 @@ The sign-in screen (email and password, then a 6-digit authenticator code) is a 
 | `src/components/` | Shared components: `Shell` (sidebar, top bar, tab bar), `Icon`, `Lq` (liquid button), `Select`, `Count`, `SheetHost`, `AlertsSheet` |
 | `src/screens/` | One file per screen; each registers its route(s) |
 | `src/lib/core.js` | Runtime: hash router (`#name` or `#name-param`), store, audit log, sheets, toasts, formatting helpers |
+| `src/lib/api.js`, `src/lib/live.js` | Client for the existing Linkloom API, and the live creators and campaigns it loads |
 | `src/lib/hooks.js` | React bindings: `useStore`, `useRoute`, `useSheets`, `useRerender` |
 | `src/lib/motion.js` | The animation layer (respects `prefers-reduced-motion`) |
 | `src/lib/ui-select.js` | Custom listbox behind `<Select>` |

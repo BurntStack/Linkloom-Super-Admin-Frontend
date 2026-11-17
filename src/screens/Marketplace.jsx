@@ -3,8 +3,9 @@
    Creators read coral, brands violet. Money is integer paise. */
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
-import L, { data } from '../lib/core.js';
+import L, { data, store } from '../lib/core.js';
 import { useRerender } from '../lib/hooks.js';
+import { LIVE, live as liveData, ensureLive, retryLive } from '../lib/live.js';
 import { ui, mo, flip, nowISO, time, when, plat, plural, Glyph, Who, CrWho, BrWho, Pill, Stars, reasonSheet, suspend, closeReport, reportFor } from '../lib/mx.jsx';
 import Icon from '../components/Icon.jsx';
 import Lq from '../components/Lq.jsx';
@@ -150,13 +151,39 @@ function CampSlip({ c, x }) {
       </div></article>
   );
 }
+/* open campaigns from the live API (GET /v1/campaigns/), read only: a guest sees no brand and no brief */
+const budgetRange = c => (c.budgetMin != null && c.budgetMax != null && c.budgetMin !== c.budgetMax ? `${L.inr(c.budgetMin)} to ${L.inr(c.budgetMax)}` : c.budgetMax != null ? L.inr(c.budgetMax) : c.budgetMin != null ? L.inr(c.budgetMin) : '—');
+function LiveCampaigns({ list }) {
+  const box = useRef(null);
+  useLayoutEffect(() => { mo('stagger', L.$$('.mx-slip', box.current)); }, []);
+  return (
+    <div className="stack" ref={box}>
+      <p className="mk-lede">{`${plural(list.length, 'open campaign')}, live from the Linkloom API. The brand and the full brief are not shown to a guest, and approving, hiding or removing a campaign needs the admin API, which the backend does not have yet.`}</p>
+      <div className="mx-board">{list.length
+        ? <section className="mx-group" aria-labelledby="mkgl"><h2 className="mx-gh" id="mkgl"><span className="t-h3">Open now</span><span className="mx-gn num">{list.length}</span></h2><div className="mx-list">{list.map(c => (
+          <article className="mx-slip mk-camp is-live" data-id={c.id} aria-labelledby={`mkc-${c.id}`} key={c.id}>
+            <div className="mx-stub"><p className="mx-stub-l">Budget, up to</p><p className="mx-price t-money">{c.budgetMax != null ? L.inr(c.budgetMax) : '—'}</p><p className="mx-stub-d">{c.postedAt ? `Posted ${L.fmtDate(c.postedAt)}` : ''}</p></div>
+            <div className="mx-body">
+              <div className="mx-top">{c.brandName ? <Who kind="b" name={c.brandName} sub="Brand" /> : <Who kind="x" name="Brand not shown" sub="Hidden from guests" />}<span className="row mk-pills"><Pill cls="pill-ok" icon="eye" label={c.status === 'open' ? 'Open' : c.status} /></span></div>
+              <h3 className="mx-t" id={`mkc-${c.id}`}>{c.title}</h3>
+              <dl className="mx-meta"><div><dt>Platform</dt><dd><span className="mx-plat-i"><Glyph p={c.platform} /></span>{plat(c.platform)}</dd></div><div><dt>Bids</dt><dd>{c.bids}</dd></div>{c.closesAt ? <div><dt>Closes</dt><dd>{L.fmtDate(c.closesAt)}</dd></div> : null}</dl>
+              <p className="mx-note">{`Budget ${budgetRange(c)}` + (c.deliverables ? ` · Deliverables: ${c.deliverables}` : '')}</p>
+            </div></article>))}</div></section>
+        : <div className="empty"><p className="t-h2">No open campaigns.</p><p className="muted">The Linkloom API has none right now.</p></div>}</div>
+    </div>
+  );
+}
 function TabCampaigns({ u, x }) {
+  const lv = liveData();
+  if (LIVE && lv.status === 'loading') return <div className="empty"><p className="t-h2">Loading campaigns from the Linkloom API</p><p className="muted">The server can take up to a minute to wake up.</p></div>;
+  if (LIVE && lv.status === 'ready') return <LiveCampaigns list={lv.campaigns} />;
   const all = S().campaigns, list = all.filter(c => inCF(c, u.cf || 'all'));
   const order = (a, b) => (flagged(b) - flagged(a)) || b.flags - a.flags || String(b.posted).localeCompare(String(a.posted));
   const groups = [['Needs a decision', c => flagged(c)], ['Live', c => c.status === 'live' && !flagged(c)], ['Hidden or removed', c => c.status !== 'live']];
   const setCf = k => () => { u.cf = k; x.refresh(`Showing ${k} campaigns`); const f = x.$(`[data-cf="${k}"]`); f && f.focus(); };
   return (
     <>
+      {LIVE && lv.status === 'failed' ? <p className="mk-lede">Could not reach the Linkloom API, so these are sample campaigns. <button className="btn-q" type="button" onClick={retryLive}>Try again</button></p> : null}
       <div className="chips mx-filter" role="group" aria-label="Filter campaigns">{CF.map(([k, n]) => <button className="chip" type="button" data-cf={k} aria-pressed={(u.cf || 'all') === k} key={k} onClick={setCf(k)}>{n + ' '}<span className="mx-cn">{all.filter(c => inCF(c, k)).length}</span></button>)}</div>
       <div className="mx-board">{list.length
         ? groups.map(([t, has], i) => { const rows = list.filter(has).sort(order); return rows.length ? <section className="mx-group" aria-labelledby={`mkg${i}`} key={i}><h2 className="mx-gh" id={`mkg${i}`}><span className="t-h3">{t}</span><span className="mx-gn num">{rows.length}</span></h2><div className="mx-list">{rows.map(c => <CampSlip c={c} x={x} key={c.id} />)}</div></section> : null; })
@@ -421,19 +448,22 @@ function Marketplace({ param }) {
   const x = { refresh, after, $ };
 
   useLayoutEffect(() => { mo('stagger', L.$$(ROWS, root.current)); }, []);
+  useEffect(() => { ensureLive(); return store.on(why => { if (why === 'live') rerender(); }); }, []);
   useEffect(() => {
     let raf = 0;
     if (openBrief) raf = requestAnimationFrame(() => briefSheet(openBrief, after(`[data-id="${openBrief}"]`, 'Campaign updated')));
     return () => { cancelAnimationFrame(raf); u.freshCat = null; };
   }, []);
 
-  const a = S().campaigns.filter(flagged).length, b = openAlerts().length, r = flaggedReviews().length;
-  const summary = a + b + r ? `${plural(a, 'flagged campaign')}, ${plural(b, 'bid pattern')} and ${plural(r, 'flagged review')} need a decision.` : 'Nothing waiting. The marketplace is clean right now.';
+  const liveOn = LIVE && liveData().status === 'ready';     // campaigns are live then; bids, reviews and the rest stay sample
+  const a = liveOn ? 0 : S().campaigns.filter(flagged).length, b = openAlerts().length, r = flaggedReviews().length;
+  const summary = liveOn ? `${plural(liveData().campaigns.length, 'open campaign')} from the live Linkloom API. In the sample data, ${plural(b, 'bid pattern')} and ${plural(r, 'flagged review')} need a decision.`
+    : a + b + r ? `${plural(a, 'flagged campaign')}, ${plural(b, 'bid pattern')} and ${plural(r, 'flagged review')} need a decision.` : 'Nothing waiting. The marketplace is clean right now.';
   const counts = { campaigns: a, bids: b, reviews: r };
   const Pane = PANES[tab];
   return (
     <div className="view-in mk" ref={root}>
-      <header className="mx-head"><div className="mx-head-t"><h1 className="t-h1">Marketplace</h1><p className="muted" id="mkSum">{summary + ' '}<span className="sample">Sample data</span></p></div></header>
+      <header className="mx-head"><div className="mx-head-t"><h1 className="t-h1">Marketplace</h1><p className="muted" id="mkSum">{summary + ' '}<span className="sample">{liveOn ? 'Campaigns: live, read only · the rest: sample data' : 'Sample data'}</span></p></div></header>
       <nav className="chips mx-filter mk-tabs" aria-label="Marketplace sections">{TABS.map(([k, n]) => <a className="chip mk-tab" href={`#marketplace-${k}`} aria-current={k === tab ? 'page' : undefined} key={k}>{n}{counts[k] ? <> <span className="mx-cn is-hot">{counts[k]}</span></> : null}</a>)}</nav>
       <p className="sr-only" id="mkLive" aria-live="polite" ref={live}></p>
       <div className="mk-pane no-anchor" id="mkPane"><Fragment key={tick.current}><Pane u={u} x={x} /></Fragment></div>
