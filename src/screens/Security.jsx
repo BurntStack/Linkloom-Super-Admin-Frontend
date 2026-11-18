@@ -1,7 +1,7 @@
 /* Security (#security): the signed-in admin's own account.
    Connected: who you are (GET /v1/auth/me/), change password (POST /v1/auth/password/change/), sign out of this
    device (POST /v1/auth/logout/) and of every device (POST /v1/auth/logout-all/).
-   Not connected: other admins' sessions, the admin team and authenticator (MFA) settings, which have no endpoint yet. */
+   Not connected: other admins' sessions, the admin team and authenticator (MFA) set-up, which have no endpoint yet. */
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import L, { store } from '../lib/core.js';
@@ -116,8 +116,8 @@ export default function Security() {
         <aside className="sec-side">
           <section className="ink-card dark sec-mfa" aria-labelledby="secMfaH">
             <p className="t-eyebrow">Two-step sign-in</p>
-            <h2 className="t-h2" id="secMfaH">Not available yet</h2>
-            <p className="sec-mfa-f"><Icon n="info" /><span>The backend has no authenticator step for admins yet, so you sign in with your password only.</span></p>
+            <h2 className="t-h2" id="secMfaH">On for every admin</h2>
+            <p className="sec-mfa-f"><Icon n="info" /><span>You sign in with your password and then a 6-digit code from your authenticator app. Setting up or resetting an app has no endpoint yet.</span></p>
           </section>
 
           <section className="card sec-card sec-pol" aria-labelledby="secPolH">

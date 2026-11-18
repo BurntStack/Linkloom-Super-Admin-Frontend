@@ -32,7 +32,7 @@ npm run preview
 
 | Screen | Endpoint | State |
 |---|---|---|
-| Sign-in | `POST /v1/auth/login/`, `POST /v1/auth/token/refresh/`, `POST /v1/auth/logout/` | Connected |
+| Sign-in | `POST /v1/admin/auth/login/`, `POST /v1/admin/auth/mfa/verify/`, `POST /v1/admin/auth/logout/`, `POST /v1/auth/token/refresh/` | Connected |
 | Command | creators, campaigns and the verification queue below | Partly connected |
 | Verification desk, queue and request | `GET /v1/admin/verifications/`, `GET /v1/admin/verifications/{id}/` | Connected, read only |
 | Verification desk, ID document | `GET /v1/uploads/{id}/download-url/` | Connected (the backend may refuse admins) |
@@ -41,15 +41,16 @@ npm run preview
 | Marketplace, campaigns | `GET /v1/campaigns/` | Connected, read only |
 | Marketplace, bids, reviews, featured, categories | none yet | Not connected |
 | Moderation, Orders and escrow, Financials, Audit log | none yet | Not connected |
-| Security | `GET /v1/auth/me/`, `POST /v1/auth/password/change/`, `POST /v1/auth/logout-all/` | Connected; admin team, sessions and MFA not connected |
+| Security | `GET /v1/auth/me/`, `POST /v1/auth/password/change/`, `POST /v1/auth/logout-all/` | Connected; admin team, sessions and authenticator set-up not connected |
 | Notifications (the bell) | `GET /v1/notifications/`, `GET /v1/notifications/unread-count/`, `POST /v1/notifications/read-all/` | Connected |
 
 Nothing an admin decides can be sent yet (approve, reject, suspend, hide, release, refund): the backend has no endpoints for it, so those buttons are switched off and the screens say why. The endpoints the backend team needs are in the backend requirements document.
 
 ### Signing in
 
-- **Who can sign in:** an admin signs in with the email and password of their Linkloom account. Only an account whose `role` is `admin` gets in; any other account's tokens are thrown away at once.
-- **No second step yet:** the backend has no authenticator step for admins, so sign-in is one step.
+- **Two steps:** email and password (`POST /v1/admin/auth/login/`, which returns an MFA challenge), then the 6-digit code from the admin's authenticator app (`POST /v1/admin/auth/mfa/verify/`, which returns the tokens). "Trust this device for 7 days" sends `trustDevice`.
+- **Who can sign in:** only an account whose `role` is `admin`; any other account's tokens are thrown away at once. The website's `/v1/auth/login/` and Google sign-in are not used, because they skip the code step.
+- **Lockout:** wrong-attempt counting is the backend's. The screen shows `ACCOUNT_LOCKED` (with `details.retryAfter`), `MFA_INVALID` and `RATE_LIMITED` as they come, and the tries left when `details.attemptsRemaining` is sent.
 - **Tokens:** kept in `sessionStorage` (closing the tab signs out) and refreshed with `POST /v1/auth/token/refresh/` when they expire. If refresh fails, the console goes back to sign-in with the "session ended" message.
 
 Admin emails must end in `@linkloom.in`; set `VITE_ADMIN_EMAIL_DOMAIN` to change that, or to an empty value to allow any address.

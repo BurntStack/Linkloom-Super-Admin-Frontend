@@ -2,7 +2,7 @@
    Every response is the envelope { success, data, error, meta }; lists page with ?limit=&cursor= and meta.nextCursor.
    The browser calls it through a same-origin proxy at /api (see vite.config.js and vercel.json), because the API does
    not send CORS headers.
-   Signing in uses the website's own POST /v1/auth/login/; the console accepts only accounts whose role is "admin".
+   Signing in uses the admin endpoints (password, then authenticator code); only accounts whose role is "admin" get in.
    Tokens live in sessionStorage, so closing the tab signs the admin out. */
 const BASE = (import.meta.env.VITE_API_BASE || '/api').replace(/\/+$/, '');
 const KEY = 'll-admin-api';
@@ -87,21 +87,29 @@ export async function list(path, { query, signal, max = 500, auth: useAuth } = {
 }
 
 /* ---------- sign-in ---------- */
-/* Returns the user. Throws ApiError: INVALID_CREDENTIALS / AUTH_INVALID for a wrong email or password,
-   NOT_ADMIN when the account exists but is not an admin (its tokens are thrown away at once). */
-export const login = (identifier, password) => signInWith('/v1/auth/login/', { identifier, password });
+/* Admins sign in in two steps, on the admin endpoints (never the website's /v1/auth/login/ or Google sign-in, which
+   would skip the authenticator step):
+   1. adminLogin(email, password)  POST /v1/admin/auth/login/      returns { challengeId, expiresIn }
+   2. verifyMfa(challengeId, code, trustDevice)
+                                   POST /v1/admin/auth/mfa/verify/ stores the tokens and returns the user
+   Errors are ApiError with the backend's code (INVALID_CREDENTIALS, MFA_INVALID, ACCOUNT_LOCKED, RATE_LIMITED, ...).
+   NOT_ADMIN is raised here when the tokens belong to an account whose role is not "admin"; they are thrown away. */
+export async function adminLogin(email, password) {
+  const { res, body } = await raw('/v1/admin/auth/login/', { method: 'POST', body: { email, password } });
+  if (!res.ok || !body || body.success === false) throw fail(res, body);
+  const d = body.data || {};
+  const challengeId = d.mfaChallengeId || d.challengeId || d.mfaToken || '';
+  if (!challengeId) throw new ApiError(res.status, 'The Linkloom API did not answer as expected.');
+  return { challengeId, expiresIn: Number(d.expiresIn) || 0 };
+}
 
-/* Google: the ID token from Google Identity Services. No `role` is sent: that field is for signing up a creator or
-   brand, and an admin console must never create one. */
-export const googleLogin = idToken => signInWith('/v1/auth/google/', { idToken });
-
-async function signInWith(path, payload) {
-  const { res, body } = await raw(path, { method: 'POST', body: payload });
+export async function verifyMfa(challengeId, code, trustDevice = false) {
+  const { res, body } = await raw('/v1/admin/auth/mfa/verify/', { method: 'POST', body: { mfaChallengeId: challengeId, code, trustDevice: !!trustDevice } });
   if (!res.ok || !body || body.success === false) throw fail(res, body);
   const d = body.data || {};
   if (!d.access || !d.user) throw new ApiError(res.status, 'The Linkloom API did not answer as expected.');
   if (d.user.role !== 'admin') {
-    raw('/v1/auth/logout/', { method: 'POST', body: { refresh: d.refresh }, token: d.access }).catch(() => {});
+    raw('/v1/admin/auth/logout/', { method: 'POST', body: { refresh: d.refresh }, token: d.access }).catch(() => {});
     throw new ApiError(403, 'This account is not a Linkloom admin account.', 'NOT_ADMIN');
   }
   writeAuth({ access: d.access, refresh: d.refresh, user: d.user });
@@ -111,7 +119,7 @@ async function signInWith(path, payload) {
 export async function logout() {
   const a = readAuth();
   writeAuth(null);
-  if (a && a.refresh) await raw('/v1/auth/logout/', { method: 'POST', body: { refresh: a.refresh }, token: a.access }).catch(() => {});
+  if (a && a.refresh) await raw('/v1/admin/auth/logout/', { method: 'POST', body: { refresh: a.refresh }, token: a.access }).catch(() => {});
 }
 
 /* Money arrives as integer paise, either bare or as { amount, currency }. */
