@@ -15,7 +15,8 @@ import { mo } from '../lib/mo.js';
 import Icon from '../components/Icon.jsx';
 import Lq from '../components/Lq.jsx';
 import { adminLogin, verifyMfa, logout as apiLogout, whenSessionEnds } from '../lib/api.js';
-import { forgetSession, ensureVerifications } from '../lib/live.js';
+import { forgetSession, startLive } from '../lib/live.js';
+import { ROLE_NAME } from '../lib/admin.js';
 
 /* the email domain admins must use; VITE_ADMIN_EMAIL_DOMAIN="" lets any address try */
 const DOMAIN = import.meta.env.VITE_ADMIN_EMAIL_DOMAIN ?? 'linkloom.in';
@@ -32,16 +33,16 @@ export function enterLive(user) {
   const name = user.fullName || user.displayName || user.email || 'Admin';
   store.set(s => {
     s.session.signedIn = true; s.session.live = true; s.session.since = new Date().toISOString();
-    s.me = { id: String(user.id || ''), name, email: user.email || '', role: 'Admin' };
+    s.me = { id: String(user.id || ''), name, email: user.email || '', role: ROLE_NAME[user.adminRole] || 'Admin', adminRole: user.adminRole || '' };
   }, 'signed-in');
-  ensureVerifications();                                   // so the side menu counts the real queue at once
+  startLive();                                             // side-menu counts and the bell, at once
 }
 function endLive() {
   forgetSession();
-  store.set(s => { s.session.signedIn = false; s.session.live = false; s.me = { id: '', name: '', email: '', role: '' }; }, 'signed-out');
+  store.set(s => { s.session.signedIn = false; s.session.live = false; s.me = { id: '', name: '', email: '', role: '', adminRole: '' }; }, 'signed-out');
 }
-/* the API refused the admin's token and could not refresh it: back to sign-in */
-whenSessionEnds(() => { if (store.s.session.signedIn) { endLive(); L.closeSheet(true); L.go('#login-expired'); } });
+/* the API refused the admin's token and could not refresh it, or this account was suspended: back to sign-in */
+whenSessionEnds(why => { if (store.s.session.signedIn) { endLive(); L.closeSheet(true); L.go(why === 'suspended' ? '#login-suspended' : '#login-expired'); } });
 
 export function signOut(opts = {}) {
   apiLogout();
@@ -131,6 +132,7 @@ function PwStep({ flash, online, say, next, life }) {
     }
     if (code === 'RATE_LIMITED' || st === 429) { const w = waitOf(err); flushSync(() => setApiErr(`Too many sign-in attempts. Wait ${w ? mmss(w) : 'a minute'}, then try again.`)); return; }
     if (isNet(err)) { flushSync(() => setApiErr('Could not reach Linkloom. Check your connection, then try again in a minute.')); return; }
+    if (code === 'ACCOUNT_SUSPENDED') { flushSync(() => setApiErr('This admin account has been suspended. Contact a super admin.')); return; }
     if (code === 'NOT_ADMIN' || st === 403) { flushSync(() => setErrs({ email: 'This Linkloom account is not an admin account.' })); email.current.focus(); return; }
     if (code === 'INVALID_CREDENTIALS' || code === 'AUTH_INVALID' || st === 400 || st === 401) {
       const left = triesOf(err);
@@ -231,6 +233,7 @@ function CodeStep({ online, say, back, life }) {
       const c = err && err.code, st = err && err.status;
       if (c === 'ACCOUNT_LOCKED' || st === 423) { LS.lockEnd = now() + (waitOf(err) || 15 * 60) * 1000; restart(''); return; }
       if (c === 'NOT_ADMIN') { restart('This Linkloom account is not an admin account.'); return; }
+      if (c === 'ACCOUNT_SUSPENDED') { restart('This admin account has been suspended. Contact a super admin.'); return; }
       if (c === 'RATE_LIMITED' || st === 429) { const w = waitOf(err); flushSync(() => setOerr(`Too many attempts. Wait ${w ? mmss(w) : 'a minute'}, then try again.`)); return; }
       if (isNet(err)) { flushSync(() => setOerr('Could not reach Linkloom. Check your connection, then try again.')); return; }
       if (c === 'MFA_CHALLENGE_EXPIRED' || c === 'MFA_CHALLENGE_INVALID' || c === 'CHALLENGE_EXPIRED' || st === 410) { restart('That sign-in took too long. Enter your password again.'); return; }
@@ -261,7 +264,8 @@ function CodeStep({ online, say, back, life }) {
 
 const FLASH = {
   out: ['info', 'logout', 'You\'re signed out on this device.'],
-  expired: ['info', 'clock', 'Your session ended. Sign in again to continue.']
+  expired: ['info', 'clock', 'Your session ended. Sign in again to continue.'],
+  suspended: ['err', 'lock', 'This admin account has been suspended, and its sessions were ended. Contact a super admin.']
 };
 
 function Login({ param }) {

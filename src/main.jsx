@@ -13,11 +13,12 @@ import './styles/screens/marketplace.css';
 import './styles/screens/moderation.css';
 import './styles/screens/orders.css';
 import './styles/screens/finance.css';
+import './styles/screens/admin.css';
 import './styles/shell.css';
 
 import L, { data } from './lib/core.js';
 import { auth, signedInLive } from './lib/api.js';
-import { ensureVerifications } from './lib/live.js';
+import { startLive, BADGES } from './lib/live.js';
 import './lib/ui-select.js';
 import './lib/motion.js';
 import './screens/index.js';
@@ -27,10 +28,11 @@ import App from './App.jsx';
 if (signedInLive()) {
   const u = auth().user;
   data.session.signedIn = true; data.session.live = true;
-  data.me = { id: String(u.id || ''), name: u.fullName || u.displayName || u.email || 'Admin', email: u.email || '', role: 'Admin' };
+  data.me = { id: String(u.id || ''), name: u.fullName || u.displayName || u.email || 'Admin', email: u.email || '', role: 'Admin', adminRole: u.adminRole || '' };
 }
 
 const root = createRoot(document.getElementById('root'));
-if (data.session.live) ensureVerifications();
+L.setBadges(BADGES);
+if (data.session.live) startLive();
 L.boot();
 flushSync(() => root.render(<App />));

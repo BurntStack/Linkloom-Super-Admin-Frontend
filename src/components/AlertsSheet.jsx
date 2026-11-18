@@ -1,10 +1,13 @@
-/* The bell in the top bar: the signed-in admin's own notifications, from the website's /v1/notifications/.
-   Admin-wide alerts (new verifications, reports, disputes, bid patterns) have no endpoint yet. */
+/* The bell in the top bar: admin notifications (GET /v1/admin/system/notifications/), with read and read-all.
+   A notification that points at a record (a verification, report, dispute, ...) opens it. */
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import L from '../lib/core.js';
 import { mo } from '../lib/mo.js';
-import { fetchNotifications, readAllNotifications, sinceNow } from '../lib/live.js';
+import { fetchNotifications, readNotification, readAllNotifications, sinceNow } from '../lib/live.js';
+import { errText } from './Admin.jsx';
 import Icon from './Icon.jsx';
+
+const ICON = k => (/verif|kyc/i.test(k) ? 'verified' : /report|abuse|flag/i.test(k) ? 'flag' : /dispute|order|escrow|refund|payout/i.test(k) ? 'lock' : /campaign/i.test(k) ? 'brief' : /bid/i.test(k) ? 'bids' : 'bell');
 
 function Alerts() {
   const box = useRef(null);
@@ -12,7 +15,7 @@ function Alerts() {
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     let on = true;
-    fetchNotifications().then(list => on && setSt({ list, err: '' }), e => on && setSt({ list: null, err: (e && e.message) || 'They did not load.' }));
+    fetchNotifications().then(list => on && setSt({ list, err: '' }), e => on && setSt({ list: null, err: errText(e) }));
     return () => { on = false; };
   }, []);
   useLayoutEffect(() => { if (st.list) mo('stagger', L.$$('.home-nt li', box.current)); }, [!!st.list]);
@@ -20,8 +23,12 @@ function Alerts() {
   const allRead = async () => {
     setBusy(true);
     try { await readAllNotifications(); setSt(s => ({ ...s, list: s.list.map(n => ({ ...n, read: true })) })); L.toast('All marked as read', 'check'); }
-    catch (e) { L.toast('That didn\'t go through. Try again.', 'alert'); }
+    catch (e) { L.toast(errText(e), 'alert'); }
     setBusy(false);
+  };
+  const open = n => () => {
+    if (!n.read) { readNotification(n.id).catch(() => {}); setSt(s => ({ ...s, list: s.list.map(x => (x.id === n.id ? { ...x, read: true } : x)) })); }
+    if (n.link) L.closeSheet();
   };
   if (st.err) return <div className="empty home-nt-empty"><p className="t-h2">Notifications did not load.</p><p className="muted">{st.err}</p></div>;
   if (!st.list) return <div className="empty home-nt-empty"><p className="t-h2">Loading notifications</p></div>;
@@ -32,14 +39,13 @@ function Alerts() {
           <button className="btn-q" type="button" data-allread="" disabled={!unread || busy} aria-disabled={!unread || busy ? 'true' : undefined} onClick={allRead}><Icon n="check" />Mark all read</button></div>
         <ul className="home-nt">{st.list.map(n => (
           <li className={n.read ? '' : 'is-unread'} key={n.id}>
-            <a className="home-nt-i" href={n.link && n.link.startsWith('#') ? n.link : undefined} onClick={() => L.closeSheet()}>
-              <span className="home-nt-ic is-plain" aria-hidden="true"><Icon n="bell" /></span>
-              <span className="home-nt-t"><span className="home-nt-txt">{n.text}</span><span className="home-nt-at">{sinceNow(n.at)}{n.read ? null : <span className="sr-only">, unread</span>}</span></span>
+            <a className="home-nt-i" href={n.link || undefined} role={n.link ? undefined : 'button'} tabIndex={0} onClick={open(n)}>
+              <span className="home-nt-ic is-plain" aria-hidden="true"><Icon n={ICON(n.kind + ' ' + n.text)} /></span>
+              <span className="home-nt-t"><span className="home-nt-txt">{n.text}</span>{n.body ? <span className="home-nt-at">{n.body}</span> : null}<span className="home-nt-at">{sinceNow(n.at)}{n.read ? null : <span className="sr-only">, unread</span>}</span></span>
               <span className="home-nt-dot" aria-hidden="true"></span>
             </a>
           </li>))}</ul>
-      </> : <div className="empty home-nt-empty"><img src="assets/step-01-envelope.svg" width="140" height="103" alt="" /><p className="t-h2">No notifications.</p><p className="muted">Notifications for your account show up here.</p></div>}
-      <p className="home-nt-foot">Admin-wide alerts (new verifications, reports, disputes) are not connected yet.</p>
+      </> : <div className="empty home-nt-empty"><img src="assets/step-01-envelope.svg" width="140" height="103" alt="" /><p className="t-h2">No notifications.</p><p className="muted">New verifications, reports, disputes and bid alerts show up here.</p></div>}
     </div>
   );
 }

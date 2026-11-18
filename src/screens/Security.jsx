@@ -1,7 +1,8 @@
 /* Security (#security): the signed-in admin's own account.
    Connected: who you are (GET /v1/auth/me/), change password (POST /v1/auth/password/change/), sign out of this
    device (POST /v1/auth/logout/) and of every device (POST /v1/auth/logout-all/).
-   Not connected: other admins' sessions, the admin team and authenticator (MFA) set-up, which have no endpoint yet. */
+   Your sessions: GET /v1/admin/users/<you>/sessions/, revoke with POST .../sessions/revoke/.
+   Not connected: the admin team list and authenticator (MFA) set-up, which have no endpoint yet. */
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import L, { store } from '../lib/core.js';
@@ -10,6 +11,8 @@ import { get, request, clearAuth } from '../lib/api.js';
 import Icon from '../components/Icon.jsx';
 import Lq from '../components/Lq.jsx';
 import { NotConnectedNote } from '../components/NotConnected.jsx';
+import { useLoad, Table, decide, errText } from '../components/Admin.jsx';
+import { api, ROLE_NAME } from '../lib/admin.js';
 import { signOut } from './Auth.jsx';
 
 const MIN = 8;                                             // the API's own minimum length
@@ -76,6 +79,22 @@ function SignOutAll({ close }) {
 }
 const signOutAll = () => L.openSheet({ title: 'Sign out of every device?', body: o => <SignOutAll close={o.close} /> });
 
+const SES_COLS = ['device', 'userAgent', 'ip', 'ipAddress', 'location', 'createdAt', 'lastSeenAt', 'lastUsedAt', 'expiresAt', 'current'];
+function MySessions({ id }) {
+  const r = useLoad(() => (id ? api.sessions(id) : Promise.resolve({ rows: [] })), [id]);
+  const others = () => decide({ title: 'Revoke your other sessions?', confirm: 'Revoke', tone: 'danger', toast: 'Sessions revoked',
+    intro: 'Every session of your account is blacklisted, including this one; you will be signed out.',
+    run: () => api.revokeSessions(id, { reason: 'Revoked by the account owner from Security' }), done: () => signOut() });
+  const rows = r.data ? r.data.rows : [];
+  const have = new Set(rows.flatMap(x => Object.keys(x || {})));
+  const cols = SES_COLS.filter(k => have.has(k));
+  return <>
+    {r.err ? <p className="muted">{errText(r.err)}</p> : r.loading ? <p className="muted">Loading your sessions.</p>
+      : rows.length ? <Table rows={rows} cols={cols.length ? cols : undefined} /> : <p className="muted">No active sessions listed.</p>}
+    {id ? <button className="btn-q" type="button" onClick={others}>Revoke every session</button> : null}
+  </>;
+}
+
 export default function Security() {
   const root = useRef(null);
   const me = store.s.me;
@@ -105,11 +124,16 @@ export default function Security() {
               <div><dt>Email</dt><dd>{email || '—'}{a.emailVerified === false ? ' · not verified' : ''}</dd></div>
               {a.phone ? <div><dt>Phone</dt><dd className="num">{a.phone}</dd></div> : null}
               <div><dt>Role</dt><dd>{a.role ? a.role.charAt(0).toUpperCase() + a.role.slice(1) : 'Admin'}</dd></div>
+              <div><dt>Admin role</dt><dd>{ROLE_NAME[a.adminRole || me.adminRole] || a.adminRole || me.adminRole || '—'}</dd></div>
             </dl>
           </section>
+          <section className="card sec-card" aria-labelledby="secSesH">
+            <div className="sec-h"><div><h2 className="t-h3" id="secSesH">Where you are signed in</h2></div></div>
+            <MySessions id={me.id || a.id} />
+          </section>
           <section className="card sec-card" aria-labelledby="secTeamH">
-            <div className="sec-h"><div><h2 className="t-h3" id="secTeamH">Admin team and sessions</h2></div></div>
-            <NotConnectedNote what="The admin team and session list" needs={['GET /v1/admin/team/', 'GET /v1/admin/sessions/']} />
+            <div className="sec-h"><div><h2 className="t-h3" id="secTeamH">Admin team</h2></div></div>
+            <NotConnectedNote what="The admin team list" needs={['GET /v1/admin/team/']} />
           </section>
         </div>
 

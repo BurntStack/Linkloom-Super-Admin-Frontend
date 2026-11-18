@@ -1,4 +1,5 @@
-/* The app chrome: sidebar (desktop), top bar and tab bar (phone). Badges show only numbers the API gives. */
+/* The app chrome: sidebar (desktop), top bar and tab bar (phone). Badges come from GET /v1/admin/system/counts/;
+   the escrow slip from GET /v1/admin/system/dashboard/. */
 import L from '../lib/core.js';
 import { useStore } from '../lib/hooks.js';
 import Icon from './Icon.jsx';
@@ -17,9 +18,9 @@ export function Sidebar({ nav }) {
           <a href="#home" data-nav="home" {...cur(nav, 'home')}>Command</a>
           <a href="#verify" data-nav="verify" {...cur(nav, 'verify')}>Verification <Badge n={c.verify} /></a>
           <a href="#accounts" data-nav="accounts" {...cur(nav, 'accounts')}>Accounts</a>
-          <a href="#marketplace" data-nav="marketplace" {...cur(nav, 'marketplace')}>Marketplace</a>
-          <a href="#moderation" data-nav="moderation" {...cur(nav, 'moderation')}>Moderation</a>
-          <a href="#orders" data-nav="orders" {...cur(nav, 'orders')}>Orders &amp; escrow</a>
+          <a href="#marketplace" data-nav="marketplace" {...cur(nav, 'marketplace')}>Marketplace <Badge n={c.campaigns} /></a>
+          <a href="#moderation" data-nav="moderation" {...cur(nav, 'moderation')}>Moderation <Badge n={c.moderation} /></a>
+          <a href="#orders" data-nav="orders" {...cur(nav, 'orders')}>Orders &amp; escrow <Badge n={c.orders} /></a>
           <a href="#finance" data-nav="finance" {...cur(nav, 'finance')}>Financials</a>
           <a href="#audit" data-nav="audit" {...cur(nav, 'audit')}>Audit log</a>
         </nav>
@@ -27,12 +28,12 @@ export function Sidebar({ nav }) {
       </div>
       <a className="sbox slipbox" href="#orders">
         <span className="t-cap slip-l">Escrow balance</span>
-        <span className="t-money t-money-m">—</span>
-        <span className="slip-plan">Not connected yet: the backend has no escrow endpoint for admins.</span>
+        <span className="t-money t-money-m">{s.live && s.live.escrow != null ? L.inr(s.live.escrow) : '—'}</span>
+        <span className="slip-plan">{s.live && s.live.escrow != null ? 'Held for orders in progress' : 'Open Orders & escrow for the pipeline'}</span>
       </a>
       <a className="sbox me" href="#security" data-nav="security" {...cur(nav, 'security')}>
         <span className="avatar" data-me-initials="">{L.initials(s.me.name)}</span>
-        <span className="me-t"><b>{s.me.name}</b><span>{s.me.email || s.me.role}</span></span>
+        <span className="me-t"><b>{s.me.name}</b><span>{s.me.role && s.me.role !== 'Admin' ? s.me.role : (s.me.email || s.me.role)}</span></span>
       </a>
     </aside>
   );

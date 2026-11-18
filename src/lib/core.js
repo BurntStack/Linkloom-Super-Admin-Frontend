@@ -55,10 +55,13 @@ const router = { get current() { return current; }, on(f) { routeSubs.add(f); re
 addEventListener('hashchange', route);
 
 /* ---------- chrome numbers (side menu badges): read by the shell components ----------
-   Only what the API can answer: pending verifications once the queue has loaded, and the admin's unread notifications. */
+   From GET /v1/admin/system/counts/ (see lib/live.js), and the admin's unread notifications. */
+let badgeFns = null;
+const setBadges = f => { badgeFns = f; };
 const chrome = () => {
-  const lv = LLD_DATA.live;
-  return { verify: lv && lv.vstatus === 'ready' ? lv.verifications.filter(v => v.status === 'pending').length : 0, bell: (lv && lv.unread) || 0 };
+  const lv = LLD_DATA.live || {}, c = lv.counts || {}, b = badgeFns || {};
+  const n = k => (b[k] ? b[k](c) || 0 : 0);
+  return { verify: n('verify'), campaigns: n('campaigns'), moderation: n('moderation'), orders: n('orders'), bell: lv.unread || 0 };
 };
 
 /* one letter, like the creator app: a two-letter avatar such as "AI" reads as an AI button */
@@ -151,7 +154,7 @@ function icon(n, cls = '') {
 const motion = { enter() {}, stagger() {}, count(el, to, fmt) { if (el) el.textContent = fmt ? fmt(to) : to; }, press() {}, swipe() { return () => {}; }, reveal() {}, celebrate() {}, flip(fn) { fn && fn(); } };
 
 Object.assign(LLD, { RM, $, $$, esc, inr, compact, fmtDate, daysLeft, ago, D, store, register, go, route, views, router, chrome, sheets,
-  current: () => current, openSheet, closeSheet, toast, icon, iconPath: n => P[n] || P.info, initials, motion });
+  setBadges, current: () => current, openSheet, closeSheet, toast, icon, iconPath: n => P[n] || P.info, initials, motion });
 
 LLD.boot = () => {
   if (booted) return;
