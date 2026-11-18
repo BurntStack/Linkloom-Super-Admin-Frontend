@@ -22,12 +22,13 @@ export const signedInLive = () => { const a = readAuth(); return !!(a && a.acces
 export const clearAuth = () => writeAuth(null);
 
 /* ---------- requests ---------- */
-async function raw(path, { method = 'GET', body, query, signal, token } = {}) {
+async function raw(path, { method = 'GET', body, query, signal, token, headers: extra } = {}) {
   const url = new URL(BASE + path, location.href);
   if (query) for (const [k, v] of Object.entries(query)) if (v != null && v !== '') url.searchParams.set(k, String(v));
   const headers = { Accept: 'application/json' };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   if (token) headers.Authorization = `Bearer ${token}`;
+  if (extra) Object.assign(headers, extra);
   let res;
   try { res = await fetch(url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), signal }); }
   catch (e) { if (e && e.name === 'AbortError') throw e; throw new ApiError(0, 'Could not reach the Linkloom API.', 'NETWORK'); }
