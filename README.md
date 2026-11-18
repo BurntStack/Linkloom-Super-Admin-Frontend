@@ -28,21 +28,37 @@ npm run preview
 
 ## Sign in
 
-The sign-in screen (email and password, then a 6-digit authenticator code) is a front-end sample. The sample email, password and code are printed on the sign-in screen itself and are defined in `src/screens/Auth.jsx`.
+The sign-in screen takes either the sample account, which opens the console on sample data, or a real Linkloom admin account, which signs in to the API (see Signing in below). The sample email, password and code are printed on the sign-in screen itself and are defined in `src/screens/Auth.jsx`.
 
-**There is no backend yet.** All data comes from `src/data/sample.js` and lives in memory, so changes reset on reload. Sign-in, MFA, the audit log and every admin action are simulated in the browser and must be replaced with real API calls before this is used with real accounts.
+**Most of the console still runs on sample data** (see Live data below). Sample data comes from `src/data/sample.js` and lives in memory, so changes reset on reload. Sign-in, MFA, the audit log and every admin action are simulated in the browser and must be replaced with real API calls before this is used with real accounts.
 
 ## Live data
 
-Two parts of the console read from the existing Linkloom API; everything else is sample data.
+Parts of the console read from the existing Linkloom API; everything else is sample data.
 
-| Screen | Endpoint | Notes |
+| Screen | Endpoint | Needs an admin sign-in |
 |---|---|---|
-| Accounts, creators list | `GET /v1/creators/` | Read only |
-| Accounts, creator page | `GET /v1/creators/{id}/` | Read only; includes packages |
-| Marketplace, campaigns | `GET /v1/campaigns/` | Read only; a guest sees no brand and no brief |
+| Accounts, creators list | `GET /v1/creators/` | No |
+| Accounts, creator page | `GET /v1/creators/{id}/` | No |
+| Accounts, creator reviews | `GET /v1/creators/{id}/reviews/` | Yes |
+| Marketplace, campaigns | `GET /v1/campaigns/` | No |
+| Verification desk, queue | `GET /v1/admin/verifications/` | Yes |
+| Verification desk, one request | `GET /v1/admin/verifications/{id}/` | Yes |
+| Verification desk, ID document | `GET /v1/uploads/{id}/download-url/` | Yes |
 
-Admin actions on live records are switched off, because the backend has no admin endpoints yet. If the API cannot be reached, those screens fall back to sample data and say so.
+All of it is read only. The backend has no endpoints yet for approving, rejecting, suspending, hiding or moving money, so those buttons are switched off on live records and the screens say why. If the API cannot be reached, the public parts fall back to sample data and say so.
+
+### Signing in
+
+- **Sample account** (shown on the sign-in screen): opens the console on sample data, with the two-step sign-in, exactly as designed. No request is sent to the API.
+- **Any other email and password:** sent to `POST /v1/auth/login/`. Only an account whose `role` is `admin` gets in; any other account's tokens are thrown away at once. The backend has no authenticator step yet, so a live sign-in is one step.
+- **Tokens:** kept in `sessionStorage` (closing the tab signs out) and refreshed with `POST /v1/auth/token/refresh/` when they expire. If refresh fails, the console goes back to sign-in with the "session ended" message. Signing out calls `POST /v1/auth/logout/`.
+
+Admin emails must end in `@linkloom.in`; set `VITE_ADMIN_EMAIL_DOMAIN` to change that, or to an empty value to allow any address.
+
+The verification records' shape is not documented, so `src/lib/live.js` reads them with the KYC field names the website uses (`status`, `steps.pan / id / bank`, `rejectionReason`, `submittedAt`) and shows any other fields as they came, under "Other fields from the API".
+
+### The API proxy
 
 The API sends no CORS headers, so the browser calls it through a same-origin `/api` proxy. `vite.config.js` sets that up for `npm run dev` and `npm run preview`, and `vercel.json` does it on Vercel. Any other host needs the same rule: `/api/*` forwarded to the backend. Settings are in `.env.example`; `VITE_LIVE_API=off` runs everything on sample data.
 

@@ -34,7 +34,7 @@ export function Sidebar({ nav }) {
       </a>
       <a className="sbox me" href="#security" data-nav="security" {...cur(nav, 'security')}>
         <span className="avatar" data-me-initials="">{L.initials(s.me.name)}</span>
-        <span className="me-t"><b>{s.me.name}</b><span>{`${s.me.role} · MFA on`}</span></span>
+        <span className="me-t"><b>{s.me.name}</b><span>{s.session.mfa === false ? s.me.role : `${s.me.role} · MFA on`}</span></span>
       </a>
     </aside>
   );

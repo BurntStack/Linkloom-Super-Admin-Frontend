@@ -4,6 +4,9 @@
    - only @linkloom.in staff accounts; a wrong email and a wrong password get the same message
    - 5 wrong passwords pause sign-in for 15 minutes and alert the security team; 5 wrong codes send you back to step 1
    - "Trust this device" is off by default and lasts 7 days; leave it off on shared computers
+   Two ways in: the sample account (shown on the screen) opens the console on sample data with the two-step flow;
+   any other email and password is sent to the real Linkloom API (POST /v1/auth/login/), and only an account whose role
+   is "admin" gets in. The backend has no authenticator step yet, so a live sign-in is one step.
    Also exports:
    - signOut({ reason })       ends this session, logs it, lands on #login-out
    - adminConfirm({...})       the confirm sheet every destructive admin action uses (reason required, logged) */
@@ -13,10 +16,14 @@ import L, { store } from '../lib/core.js';
 import { mo } from '../lib/mo.js';
 import Icon from '../components/Icon.jsx';
 import Lq from '../components/Lq.jsx';
+import { login as apiLogin, logout as apiLogout, whenSessionEnds } from '../lib/api.js';
+import { LIVE, forgetSession, ensureVerifications } from '../lib/live.js';
 
 const now = () => Date.now();
 const EMAIL = 'kavya@linkloom.in', PW = 'Loom#Admin26', CODE = '582044', PW_TRIES = 5, CODE_TRIES = 5, LOCK = 15 * 60;
 export const SAMPLE = { email: EMAIL, pw: PW, code: CODE };
+/* the email domain admins must use; VITE_ADMIN_EMAIL_DOMAIN="" lets any address try */
+const DOMAIN = import.meta.env.VITE_ADMIN_EMAIL_DOMAIN ?? 'linkloom.in';
 const mmss = s => Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
 const maskEmail = e => { const [u, d] = String(e).split('@'); return d ? u.slice(0, 2) + '••••@' + d : e; };
 
@@ -58,7 +65,31 @@ export function adminConfirm(o) {
   L.openSheet({ title: o.title, body: <ConfirmForm o={o} close={L.closeSheet} /> });
 }
 
+/* the console signed in to the real API: the admin's own name, and nothing from the sample account */
+const SAMPLE_ME = { ...store.s.me };
+export function enterLive(user) {
+  const name = user.fullName || user.displayName || user.email || 'Admin';
+  store.set(s => {
+    s.session.signedIn = true; s.session.live = true; s.session.mfa = false; s.session.since = new Date().toISOString();
+    s.me = { ...s.me, name, email: user.email || '', role: 'Admin', photo: null };
+  }, 'signed-in');
+  ensureVerifications();                                   // so the side menu counts the real queue at once
+}
+function endLive() {
+  forgetSession();
+  store.set(s => { s.session.signedIn = false; s.session.live = false; s.me = { ...SAMPLE_ME }; }, 'signed-out');
+}
+/* the API refused the admin's token and could not refresh it: back to sign-in */
+whenSessionEnds(() => { if (store.s.session.live) { endLive(); L.closeSheet(true); L.go('#login-expired'); } });
+
 export function signOut(opts = {}) {
+  if (store.s.session.live) {
+    apiLogout();
+    endLive();
+    L.closeSheet(true);
+    L.go('#login-' + (opts.param || 'out'));
+    return;
+  }
   L.audit('auth.logout', 'Admin console', opts.reason || 'Signed out on this device');
   store.set(s => { s.session.signedIn = false; }, 'signed-out');
   L.closeSheet(true);
@@ -122,6 +153,7 @@ function PwStep({ flash, online, say, next, life }) {
   const [lockLeft, setLockLeft] = useState(0);
   const [codes, setCodes] = useState(() => { const c = !!LS.codeFail; LS.codeFail = false; return c; });
   const [busy, setBusy] = useState(false);
+  const [apiErr, setApiErr] = useState('');
   const [showFlash] = useState(() => !!flash && !LS.tries);
   const clr = id => setErrs(e => (e[id] ? { ...e, [id]: null } : e));
 
@@ -138,25 +170,46 @@ function PwStep({ flash, online, say, next, life }) {
   }, []);
 
   const fillSample = () => { email.current.value = EMAIL; pw.current.value = PW; LS.email = EMAIL; setErrs({}); say('Sample details filled'); go.current.focus(); };
+  const wrong = () => {
+    LS.tries++;
+    const left = PW_TRIES - LS.tries;
+    if (left <= 0) { LS.lockEnd = now() + LOCK * 1000; pw.current.value = ''; flushSync(lockTick); say('Sign-in paused for 15 minutes'); return; }
+    flushSync(() => setErrs({ pw: `That email and password don't match. ${left} ${left === 1 ? 'try' : 'tries'} left before a 15-minute pause.` }));
+    pw.current.value = ''; pw.current.focus(); mo('shake', pw.current.parentElement);
+  };
+  /* any account but the sample one: ask the real API */
+  const signInLive = async (ev, pv) => {
+    flushSync(() => { setBusy(true); setApiErr(''); });
+    try {
+      const user = await apiLogin(ev, pv);
+      if (!life.alive) return;
+      LS.tries = 0; LS.email = ev;
+      enterLive(user);
+      say('Signed in. Opening the console.');
+      L.go('#home');
+    } catch (err) {
+      if (!life.alive) return;
+      flushSync(() => setBusy(false));
+      const code = err && err.code, st = err && err.status;
+      if (code === 'NOT_ADMIN') { flushSync(() => setErrs({ email: 'This Linkloom account is not an admin account.' })); email.current.focus(); return; }
+      if (code === 'RATE_LIMITED' || st === 429) { flushSync(() => setApiErr('Too many sign-in attempts. Wait a minute, then try again.')); return; }
+      if (code === 'NETWORK' || !st || st >= 500) { flushSync(() => setApiErr('Could not reach Linkloom. Check your connection, then try again in a minute.')); return; }
+      wrong();
+    }
+  };
   const submit = e => {
     e.preventDefault();
-    if (LS.lockEnd > now()) return;
+    if (LS.lockEnd > now() || busy) return;
     if (!navigator.onLine) return;
     const ev = email.current.value.trim().toLowerCase(), pv = pw.current.value;
+    const sample = ev === EMAIL && pv === PW;
     const bad = {};
     if (!ev) bad.email = 'Enter your work email.';
     else if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(ev)) bad.email = 'That email looks incomplete.';
-    else if (!/@linkloom\.in$/.test(ev)) bad.email = <>Admin accounts use a <b>@linkloom.in</b> address.</>;
+    else if (DOMAIN && !ev.endsWith('@' + DOMAIN)) bad.email = <>Admin accounts use a <b>{'@' + DOMAIN}</b> address.</>;
     if (!pv) bad.pw = 'Enter your password.';
     if (bad.email || bad.pw) { flushSync(() => setErrs(bad)); const i = form.current.querySelector('.field.is-err input'); i && i.focus(); return; }
-    if (ev !== EMAIL || pv !== PW) {
-      LS.tries++;
-      const left = PW_TRIES - LS.tries;
-      if (left <= 0) { LS.lockEnd = now() + LOCK * 1000; pw.current.value = ''; flushSync(lockTick); say('Sign-in paused for 15 minutes'); return; }
-      flushSync(() => setErrs({ pw: `That email and password don't match. ${left} ${left === 1 ? 'try' : 'tries'} left before a 15-minute pause.` }));
-      pw.current.value = ''; pw.current.focus(); mo('shake', pw.current.parentElement);
-      return;
-    }
+    if (!sample) { if (LIVE) signInLive(ev, pv); else wrong(); return; }
     LS.tries = 0; LS.email = ev;
     setBusy(true);
     life.timer = setTimeout(next, 380);
@@ -179,7 +232,8 @@ function PwStep({ flash, online, say, next, life }) {
         <div data-status="">
           {locked
             ? <Note kind="warn" ic="lock" role="status"><p className="t-label">Sign-in paused for <span className="num" data-cd="">{mmss(lockLeft)}</span></p><p>{`${PW_TRIES} wrong attempts on ${maskEmail(LS.email || EMAIL)}. We've alerted the security team. If this wasn't you, tell them on #security.`}</p></Note>
-            : codes ? <Note kind="warn" ic="shield" role="status"><p className="t-label">Too many wrong codes</p><p>We've sent you back to step 1 and told the security team. One more wrong password pauses sign-in for 15 minutes.</p></Note> : null}
+            : codes ? <Note kind="warn" ic="shield" role="status"><p className="t-label">Too many wrong codes</p><p>We've sent you back to step 1 and told the security team. One more wrong password pauses sign-in for 15 minutes.</p></Note>
+            : apiErr ? <Note kind="err" ic="alert" role="status"><p>{apiErr}</p></Note> : null}
         </div>
         <div className="auth-acts"><Lq type="submit" className="lq-p auth-go" data-submit="" ref_={go} disabled={locked || busy} aria-disabled={locked ? 'true' : undefined}>{busy ? 'Checking…' : <>Continue <Icon n="arrow" className="ic" /></>}</Lq></div>
         <p className="auth-lockh" id="auth-lock-h"><Icon n="lock" /><span>{`${PW_TRIES} wrong attempts pause sign-in for 15 minutes and alert the security team.`}</span></p>

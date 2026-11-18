@@ -7,7 +7,7 @@ import { flushSync } from 'react-dom';
 import L, { data, store } from '../lib/core.js';
 import { mo } from '../lib/mo.js';
 import { useRerender } from '../lib/hooks.js';
-import { LIVE, live, ensureLive, retryLive, fetchCreator } from '../lib/live.js';
+import { LIVE, live, ensureLive, retryLive, fetchCreator, fetchReviews, isLiveSession } from '../lib/live.js';
 import { confirm, mask, mailMask, freeMail, gstState, Av, LogLine } from '../lib/adm.jsx';
 import Icon from '../components/Icon.jsx';
 import Lq from '../components/Lq.jsx';
@@ -302,10 +302,13 @@ function LiveCreator({ id }) {
   const root = useRef(null);
   const rerender = useRerender();
   const [got, setGot] = useState({ c: null, done: false });
+  const signed = isLiveSession();
+  const [revs, setRevs] = useState({ list: null, err: '' });     // reviews need a signed-in admin
   useEffect(() => {
     ensureLive();
     let on = true;
     fetchCreator(id).then(c => on && setGot({ c, done: true }), () => on && setGot({ c: null, done: true }));
+    if (signed) fetchReviews(id).then(list => on && setRevs({ list, err: '' }), e => on && setRevs({ list: null, err: (e && e.message) || 'They did not load.' }));
     const off = store.on(why => { if (why === 'live') rerender(); });
     return () => { on = false; off(); };
   }, []);
@@ -347,6 +350,12 @@ function LiveCreator({ id }) {
               <div><dt>Replies within</dt><dd>{c.repliesWithin || <None t="Not set" />}</dd></div>
             </dl>
           </section>
+          {signed ? <section className="acc-sec" aria-labelledby="accRev"><h2 className="t-h2" id="accRev">Reviews</h2>
+            {revs.err ? <p className="muted">{`Reviews did not load: ${revs.err}`}</p>
+              : revs.list == null ? <p className="muted">Loading reviews.</p>
+              : revs.list.length ? <ul className="acc-reps">{revs.list.map((r, i) => <li key={r.id || i}><span className="acc-reps-t"><b>{`${'★'.repeat(r.stars)}${'☆'.repeat(Math.max(0, 5 - r.stars))} ${r.from}`}</b><span>{r.text + (r.at ? ' · ' + L.fmtDate(r.at) : '')}</span></span></li>)}</ul>
+              : <p className="muted">No reviews yet.</p>}
+          </section> : null}
           <section className="acc-sec" aria-labelledby="accPkg"><h2 className="t-h2" id="accPkg">Packages</h2>
             {c.packages == null ? <p className="muted">Loading packages.</p>
               : c.packages.length ? <dl className="acc-kv">{c.packages.map(p => <div key={p.id}><dt>{p.title}</dt><dd>{[PLATFORM[p.platform] || p.platform, p.deliverables, p.deliveryDays != null ? `${p.deliveryDays} days` : '', p.price != null ? L.inr(p.price) : ''].filter(Boolean).join(' · ')}</dd></div>)}</dl>
@@ -359,7 +368,7 @@ function LiveCreator({ id }) {
             <p className="muted">Nothing on this page can be changed from here.</p>
           </section>
           <section className="acc-sec acc-card" aria-labelledby="accMiss"><h2 className="t-h3" id="accMiss">Not shown yet</h2>
-            <p className="muted">KYC details, orders, reports and reviews need a signed-in admin on the API. Reviews are listed as public in the API guide but currently ask for a sign-in.</p>
+            <p className="muted">{signed ? 'KYC details are on the Verification desk. Orders and reports have no admin endpoint yet.' : 'Reviews show once you sign in with a Linkloom admin account. KYC details, orders and reports need admin endpoints the backend does not have yet.'}</p>
           </section>
         </div>
       </div>

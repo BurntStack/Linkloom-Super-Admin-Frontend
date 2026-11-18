@@ -63,7 +63,7 @@ addEventListener('hashchange', route);
 const chrome = () => {
   const s = LLD_DATA;
   return {
-    verify: s.verifications.filter(v => v.status === 'pending').length,
+    verify: s.session.live && s.live && s.live.vstatus === 'ready' ? s.live.verifications.filter(v => v.status === 'pending').length : s.verifications.filter(v => v.status === 'pending').length,
     moderation: s.reports.filter(r => r.status === 'open').length,
     orders: s.disputes.filter(d => d.status === 'open').length,
     bell: s.notifications.filter(n => !n.read).length,
