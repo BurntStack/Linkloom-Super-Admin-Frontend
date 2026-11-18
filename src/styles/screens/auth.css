@@ -27,7 +27,6 @@
 .auth-legal{font-size:12px;line-height:16px;color:var(--ll-slate);max-width:52ch}
 .auth-hint{font-size:13px;line-height:18px;color:var(--ll-slate)}
 .auth-hint b{color:var(--ll-ink-text);font-weight:600}
-.auth-samplebtn{align-self:flex-start;font-size:13px;color:var(--ll-slate)}
 .auth-lockh{display:flex;align-items:flex-start;gap:8px;margin-top:-8px;font-size:13px;line-height:18px;color:var(--ll-slate)}
 .auth-lockh svg{width:15px;height:15px;flex:none;margin-top:1px}
 
@@ -54,7 +53,6 @@
 .auth-note-warn{background:var(--ll-warn-bg);color:var(--ll-warn-fg)}
 .auth-note-err{background:transparent;color:var(--ll-err-fg);box-shadow:inset 0 0 0 1.5px currentColor}
 [data-status]:empty{display:none}
-.auth-sample{display:flex;flex-direction:column;align-items:flex-start;gap:8px;padding-top:24px;border-top:1px solid var(--ll-rule)}
 
 /* 6-box code, grouped 3 + 3 like the authenticator shows it */
 .auth-boxes{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px;max-width:432px}

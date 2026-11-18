@@ -3,7 +3,6 @@
 /* ---------- kit: header, filters, slips ---------- */
 .mx-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px 24px;flex-wrap:wrap}
 .mx-head-t{display:flex;flex-direction:column;gap:8px;min-width:0;max-width:720px}
-.mx-head-t .sample{white-space:nowrap}
 .mx-filter .chip svg{width:16px;height:16px}
 .mx-cn{display:inline-grid;place-items:center;min-width:20px;height:20px;padding:0 6px;border-radius:var(--r-full);background:var(--ll-paper-raised);color:var(--ll-ink-text);font-size:12px;line-height:1;font-variant-numeric:tabular-nums}
 .mx-filter .chip[aria-pressed=true] .mx-cn,.mx-filter .chip[aria-current=page] .mx-cn{background:var(--ll-butter)}

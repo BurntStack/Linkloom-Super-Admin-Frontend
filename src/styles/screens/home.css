@@ -7,7 +7,6 @@
 .home-when{font-weight:600;font-size:13px;line-height:18px;color:var(--ll-slate);font-variant-numeric:tabular-nums}
 .home-greet{font-family:var(--ll-display);font-weight:400;font-size:clamp(40px,4.6vw,64px);line-height:1;letter-spacing:-.035em;text-wrap:balance}
 .home-lede{font-size:18px;line-height:26px;color:var(--ll-ink-text);text-wrap:pretty}
-.home-lede .sample{white-space:nowrap}
 
 /* avatars: creators coral, brands violet, other admins paper, you butter */
 .home-av{display:grid;place-items:center;flex:none;width:32px;height:32px;border-radius:50%;background:var(--ll-coral);color:var(--ll-ink-text);font:400 16px/1 var(--ll-display)}
