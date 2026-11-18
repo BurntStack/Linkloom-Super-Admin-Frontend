@@ -1,164 +1,368 @@
-/* Accounts (#accounts, #creator-<id>, #brand-<id>).
-   Creators come from GET /v1/creators/ and each profile from GET /v1/creators/{id}/, with its reviews. Read only: the
-   backend has no admin endpoints for accounts yet (suspend, badges, tags, featured), and none that lists brands, so
-   the Brands tab and brand pages say they are not connected. Classes are .acc-*. */
+/* Accounts governance (#accounts, #creator-<id>, #brand-<id>).
+   List: search, Creators / Brands, status and quick filters. Creator detail: badges, category tags, featured, reports, suspend or reactivate,
+   password-reset help, sign out of devices. Brand detail: business mail, company registration, campaign posting frequency (30 days vs usual).
+   Data: /v1/admin/users/creators/ and brands/ (lists and details), /v1/admin/users/accounts/{user_id}/sessions/.
+   Actions: PATCH creators/{id}/ {badges, tags, featured}; POST accounts/{user_id}/suspend/, reactivate/, password-reset/,
+   sessions/revoke/. The server writes the audit log; destructive ones go through the confirm sheet in lib/adm.jsx. Classes are .acc-*. */
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
-import L, { data, store } from '../lib/core.js';
+import L, { data } from '../lib/core.js';
 import { mo } from '../lib/mo.js';
 import { useRerender } from '../lib/hooks.js';
-import { live, ensureLive, retryLive, fetchCreator, fetchReviews } from '../lib/live.js';
-import Av from '../components/Av.jsx';
+import { confirm, mask, mailMask, freeMail, gstState, Av, LogLine } from '../lib/adm.jsx';
 import Icon from '../components/Icon.jsx';
 import Lq from '../components/Lq.jsx';
-import NotConnected, { NotConnectedNote } from '../components/NotConnected.jsx';
+import needs from '../components/Needs.jsx';
+import { act as api, reload, fetchCreator, fetchBrand, fetchSessions, why } from '../lib/admin.js';
 
-const ui = () => (data.ui.accounts = data.ui.accounts || { tab: 'creator', q: '', f: [] });
+const S = () => data;
+const ui = () => { const s = S(); s.ui = s.ui || {}; return (s.ui.accounts = s.ui.accounts || { tab: 'creator', q: '', status: 'all', f: [], sess: {} }); };
+
+const BADGES = [['Verified Pro', 'Verified KYC and 5+ approved jobs'], ['Top rated', 'Rated 4.7 or more by brands'], ['Rising', 'Fast-growing new creator']];
+const KYC = { verified: ['pill-ok', 'check', 'Verified'], under_review: ['pill-info', 'clock', 'In review'], action_needed: ['pill-warn', 'info', 'Action needed'], rejected: ['pill-err', 'alert', 'Rejected'], not_started: ['pill-paper', 'minus', 'Not verified'] };
+const KycPill = ({ k }) => { const m = KYC[k] || KYC.not_started; return <span className={`pill ${m[0]}`}><Icon n={m[1]} />{m[2]}</span>; };
+const StPill = ({ a }) => a.status === 'suspended' ? <span className="pill pill-err"><Icon n="alert" />Suspended</span> : <span className="pill pill-ok"><Icon n="check" />Active</span>;
+const spike = b => b.spikeFlag || (b.postsLast30 >= 5 && b.postsLast30 > 2 * b.postsAvg);
 const None = ({ t = 'Not provided' }) => <span className="muted">{t}</span>;
-const BRAND_NEEDS = ['GET /v1/admin/brands/', 'GET /v1/admin/brands/{id}/'];
+
+/* the account's signed-in devices, from GET /v1/admin/users/accounts/{user_id}/sessions/ */
+function useSessions(a) {
+  const [st, setSt] = useState({ list: null, err: '' });
+  const load = () => { if (!a.userId) { setSt({ list: [], err: 'This account has no user id from the API.' }); return; } fetchSessions(a.userId).then(list => setSt({ list, err: '' }), e => setSt({ list: null, err: why(e) })); };
+  useEffect(load, [a.userId]);
+  return [st, load];
+}
 
 /* ---------- list ---------- */
-/* the public API says whether a creator is verified; it has no badges, reports or suspension status */
-const QF = [['ver', 'Verified', c => c.verified], ['unv', 'Not verified', c => !c.verified]];
-const Row = ({ c }) => (
+const QF = {
+  creator: [['pro', 'Verified Pro', c => c.badges.includes('Verified Pro')], ['feat', 'Featured', c => c.featured], ['kyc', 'KYC not done', c => c.kyc !== 'verified'], ['rep', 'Has reports', c => c.reports > 0]],
+  brand: [['ver', 'Verified', b => b.verify === 'verified'], ['unv', 'Not verified', b => b.verify !== 'verified'], ['spike', 'Posting spike', spike], ['rep', 'Has reports', b => b.reports > 0]]
+};
+const CRow = ({ c }) => (
   <li><a className="acc-row" href={`#creator-${c.id}`}>
     <Av kind="creator" name={c.name} />
     <span className="acc-id"><b>{c.name}</b><span>{(c.handle ? c.handle + ' · ' : '') + c.city}</span></span>
-    <span className="acc-tags">{c.tags.slice(0, 2).map(t => <span className="pill pill-line" key={t}>{t}</span>)}</span>
+    <span className="acc-tags">{c.badges.map(b => <span className="acc-badge" key={b}><Icon n="verified" />{b}</span>)}{c.tags.slice(0, 2).map(t => <span className="pill pill-line" key={t}>{t}</span>)}{c.featured ? <span className="acc-feat"><Icon n="star" />Featured</span> : null}</span>
     <span className="acc-n"><b className="t-money">{c.followers ? L.compact(c.followers) : '—'}</b><span>followers</span></span>
-    <span className="acc-k">{c.verified ? <span className="pill pill-ok"><Icon n="check" />Verified</span> : <span className="pill pill-paper"><Icon n="minus" />Not verified</span>}</span>
-    <span className="acc-s"></span><span className="acc-go"><Icon n="chevron" /></span></a></li>
+    <span className="acc-k"><KycPill k={c.kyc} />{c.reports ? <span className="acc-rep"><Icon n="flag" />{`${c.reports} report${c.reports > 1 ? 's' : ''}`}</span> : null}</span>
+    <span className="acc-s"><StPill a={c} /></span><span className="acc-go"><Icon n="chevron" /></span></a></li>
 );
+const BRow = ({ b }) => { const good = b.mailVerified && !freeMail(b.email); return (
+  <li><a className="acc-row" href={`#brand-${b.id}`}>
+    <Av kind="brand" name={b.name} />
+    <span className="acc-id"><b>{b.name}</b><span>{[b.contact !== '—' ? b.contact : '', b.city !== '—' ? b.city : ''].filter(Boolean).join(' · ') || '—'}</span></span>
+    <span className="acc-tags">{b.email ? <span className={'acc-mail' + (good ? '' : ' is-bad')}><Icon n={good ? 'check' : 'alert'} />{b.email}</span> : null}</span>
+    <span className="acc-n"><b className="t-money">{b.postsLast30}</b><span>posts in 30 days</span></span>
+    <span className="acc-k"><KycPill k={b.verify} />{spike(b) ? <span className="acc-rep"><Icon n="chart" />Posting spike</span> : b.reports ? <span className="acc-rep"><Icon n="flag" />{`${b.reports} report${b.reports > 1 ? 's' : ''}`}</span> : null}</span>
+    <span className="acc-s"><StPill a={b} /></span><span className="acc-go"><Icon n="chevron" /></span></a></li>
+); };
 
 function List() {
   const root = useRef(null), search = useRef(null);
   const rerender = useRerender();
-  const u = ui(), lv = live();
-  const isCreators = u.tab === 'creator';
-  const ready = lv.status === 'ready', loading = lv.status === 'loading' || lv.status === 'idle', failed = lv.status === 'failed';
-  useEffect(() => { ensureLive(); return store.on(why => { if (why === 'live') rerender(); }); }, []);
-  useLayoutEffect(() => { mo('stagger', [...root.current.querySelectorAll('.acc-row')]); }, [lv.status, u.tab]);
+  const s = S(), u = ui();
+  const [head] = useState(() => ({ creators: s.creators.length, brands: s.brands.length, susp: [...s.creators, ...s.brands].filter(a => a.status === 'suspended').length }));
+  useLayoutEffect(() => { mo('stagger', [...root.current.querySelectorAll('.acc-row')]); }, []);
 
   const q = u.q.trim().toLowerCase();
-  const fs = QF.filter(([k]) => u.f.includes(k));
-  const rows = ready ? lv.creators.filter(a => fs.every(([, , fn]) => fn(a)) && (!q || [a.name, a.handle, a.city].some(x => x && String(x).toLowerCase().includes(q)))) : [];
-  const dirty = u.q || fs.length;
+  const src = u.tab === 'creator' ? s.creators : s.brands;
+  const fs = QF[u.tab].filter(([k]) => u.f.includes(k));
+  const rows = src.filter(a => (u.status === 'all' || a.status === u.status) && fs.every(([, , fn]) => fn(a)) &&
+    (!q || [a.name, a.handle, a.city, a.contact, a.gstin, a.email].some(x => x && String(x).toLowerCase().includes(q))));
+  const dirty = u.q || u.status !== 'all' || u.f.length;
 
   const set = fn => () => { fn(); flushSync(rerender); };
-  const setTab = k => set(() => { u.tab = k; });
+  const setTab = k => set(() => { u.tab = k; u.f = []; });
+  const setStatus = k => set(() => { u.status = k; });
   const toggle = k => set(() => { u.f = u.f.includes(k) ? u.f.filter(x => x !== k) : [...u.f, k]; });
-  const clear = set(() => { u.q = ''; u.f = []; search.current.value = ''; });
+  const clear = set(() => { u.q = ''; u.status = 'all'; u.f = []; search.current.value = ''; });
 
   return (
     <div className="view-in acc" ref={root}>
       <header className="page-h acc-head">
         <div className="t"><p className="t-eyebrow">Accounts</p><h1 className="t-h1">People and brands on Linkloom</h1>
-          <p className="muted">{ready ? `${lv.creators.length} creator${lv.creators.length === 1 ? '' : 's'} on Linkloom. Read only for now.` : 'Creators and brands on Linkloom.'}</p></div>
-        {isCreators ? <div className="acc-search"><Icon n="search" /><label className="sr-only" htmlFor="accQ">Search creators</label>
-          <input className="input" id="accQ" type="search" autoComplete="off" spellCheck="false" placeholder="Name, @handle or city" defaultValue={u.q} ref={search} onInput={e => { u.q = e.currentTarget.value; rerender(); }} /></div> : null}
+          <p className="muted">{`${head.creators} creators and ${head.brands} brands${head.susp ? `, ${head.susp} suspended` : ''}. Changes here are logged. `}</p></div>
+        <div className="acc-search"><Icon n="search" /><label className="sr-only" htmlFor="accQ">Search accounts</label>
+          <input className="input" id="accQ" type="search" autoComplete="off" spellCheck="false" placeholder="Name, @handle, city or GSTIN" defaultValue={u.q} ref={search} onInput={e => { u.q = e.currentTarget.value; rerender(); }} /></div>
       </header>
       <div className="acc-bar">
         <div className="seg acc-seg" role="group" aria-label="Account type">
-          <button type="button" data-tab="creator" aria-pressed={isCreators} onClick={setTab('creator')}><i className="dot acc-dot-c"></i>Creators</button>
-          <button type="button" data-tab="brand" aria-pressed={!isCreators} onClick={setTab('brand')}><i className="dot acc-dot-b"></i>Brands</button>
+          <button type="button" data-tab="creator" aria-pressed={u.tab === 'creator'} onClick={setTab('creator')}><i className="dot acc-dot-c"></i>Creators</button>
+          <button type="button" data-tab="brand" aria-pressed={u.tab === 'brand'} onClick={setTab('brand')}><i className="dot acc-dot-b"></i>Brands</button>
         </div>
-        {isCreators ? <div className="chips acc-qf no-anchor" role="group" aria-label="Filters" id="accQf">{QF.map(([k, t]) => <button className="chip" type="button" data-f={k} aria-pressed={u.f.includes(k)} key={k} onClick={toggle(k)}>{t}</button>)}</div> : null}
+        <div className="chips acc-st" role="group" aria-label="Status">{[['all', 'Any status'], ['active', 'Active'], ['suspended', 'Suspended']].map(([k, t]) => <button className="chip" type="button" data-st={k} aria-pressed={u.status === k} key={k} onClick={setStatus(k)}>{t}</button>)}</div>
+        <div className="chips acc-qf no-anchor" role="group" aria-label="Filters" id="accQf">{QF[u.tab].map(([k, t]) => <button className="chip" type="button" data-f={k} aria-pressed={u.f.includes(k)} key={u.tab + k} onClick={toggle(k)}>{t}</button>)}</div>
       </div>
-      {!isCreators ? <NotConnectedNote what="The brand list" needs={BRAND_NEEDS} /> : <>
-        <div className="acc-count"><p id="accCount" aria-live="polite">{ready ? <><b>{rows.length}</b>{` of ${lv.creators.length} creators`}</> : loading ? 'Loading creators…' : 'Creators did not load.'}</p><button className="btn-q" type="button" data-clear="" hidden={!dirty || !ready} onClick={clear}>Clear filters</button></div>
-        <ul className="acc-list no-anchor" id="accList">
-          {loading ? <li className="empty"><p className="t-h3">Loading creators</p><p className="muted">The Linkloom server can take up to a minute to wake up.</p></li>
-            : failed ? <li className="empty"><p className="t-h3">Creators did not load.</p><p className="muted">{lv.error}</p><Lq className="lq-s lq-sm" onClick={retryLive}>Try again</Lq></li>
-            : rows.length ? rows.map(c => <Row c={c} key={c.id} />)
-            : <li className="empty"><img src="assets/step-04-orbit.svg" width="160" height="117" alt="" /><p className="t-h3">{lv.creators.length ? 'No creators match' : 'No creators yet'}</p><p className="muted">{lv.creators.length ? 'Try another name, or clear the filters.' : 'Creators show up here once they sign up on Linkloom.'}</p></li>}
-        </ul>
-      </>}
+      <div className="acc-count"><p id="accCount" aria-live="polite"><b>{rows.length}</b>{` of ${src.length} ${u.tab === 'creator' ? 'creators' : 'brands'}`}</p><button className="btn-q" type="button" data-clear="" hidden={!dirty} onClick={clear}>Clear filters</button></div>
+      <ul className="acc-list no-anchor" id="accList">
+        {rows.length ? rows.map(a => (u.tab === 'creator' ? <CRow c={a} key={a.id} /> : <BRow b={a} key={a.id} />))
+          : <li className="empty"><img src="assets/step-04-orbit.svg" width="160" height="117" alt="" /><p className="t-h3">{`No ${u.tab === 'creator' ? 'creators' : 'brands'} match`}</p><p className="muted">Try another name, or clear the filters.</p></li>}
+      </ul>
     </div>
   );
 }
 
+/* ---------- shared detail parts ---------- */
+function History({ a }) {
+  const rows = S().audit.filter(e => [a.id, a.userId].some(x => x && String(e.target).includes(x)) || (a.name && String(e.target).includes(a.name))).slice().reverse();
+  return (
+    <section className="acc-sec" aria-labelledby="accHist"><h2 className="t-h3" id="accHist">Admin history</h2>
+      {rows.length ? <ol className="acc-hist">{rows.map(e => <li key={e.id}><span className="acc-hist-a">{e.action}</span><span className="acc-hist-d">{e.detail || ''}</span><span className="acc-hist-w num">{`${e.who} · ${L.fmtDate(e.at)}`}{e.hash ? <> · <code>{e.hash}</code></> : null}</span></li>)}</ol>
+        : <p className="muted">No admin actions on this account yet.</p>}
+      <a className="btn-q" href="#audit"><Icon n="shield" />Full audit log</a></section>
+  );
+}
+function Security({ kind, a }) {
+  const [sst, reloadSessions] = useSessions(a), ss = sst.list || [];
+  const first = String(kind === 'brand' && a.contact !== '—' ? a.contact : a.name).split(' ')[0];
+  const susp = a.status === 'suspended';
+  const key = kind === 'brand' ? 'brands' : 'creators';
+  const refetch = () => reload([key, 'counts']).then(() => (kind === 'brand' ? fetchBrand(a.id) : fetchCreator(a.id)).catch(() => {})).then(() => L.route());
+  const noUser = !a.userId;
+  const suspend = () => confirm({
+    title: `Suspend ${a.name}`, cta: 'Suspend account', danger: true,
+    lead: kind === 'brand' ? `Campaigns are hidden, no new hires can start, and money in escrow stays held until each order is settled.` : `${a.name.split(' ')[0]} cannot bid or be hired. Live orders and money in escrow are not touched; settle them in Orders.`,
+    reasons: kind === 'brand' ? ['Scam or pay-to-join campaigns', 'Off-platform payment requests', 'Fake business details', 'Abuse or harassment'] : ['Bid ring or linked accounts', 'Scam or off-platform payment', 'Fake reviews or followers', 'Abuse or harassment', 'Under 18'],
+    extra: <label className="check"><input type="checkbox" data-outall="" defaultChecked /><span>Also sign out of every device</span></label>,
+    done: `${a.name} suspended · logged to audit`,
+    onConfirm: ({ reason, note, body }) => {
+      const out = body.querySelector('[data-outall]').checked;
+      return api.suspend(a.userId, reason === 'Other' ? note : reason, reason === 'Other' ? '' : note)
+        .then(() => (out ? api.revokeSessions(a.userId, null, 'Suspended: ' + (reason === 'Other' ? note : reason)).catch(() => {}) : null)).then(refetch);
+    }
+  });
+  const reactivate = () => confirm({
+    title: `Reactivate ${a.name}`, cta: 'Reactivate',
+    lead: `${a.suspended ? `Suspended${a.suspended.by ? ' by ' + a.suspended.by : ''}${a.suspended.at ? ' on ' + L.fmtDate(a.suspended.at) : ''}: “${a.suspended.reason || 'no reason recorded'}”. ` : ''}Once reactivated they can sign in, bid and be hired again. Badges and featured status do not come back on their own.`,
+    reasons: ['Appeal accepted', 'Suspended by mistake', 'Issue resolved'],
+    done: `${a.name} reactivated · logged to audit`,
+    onConfirm: ({ reason, note }) => api.reactivate(a.userId, reason === 'Other' ? note : reason + (note ? ': ' + note : '')).then(refetch)
+  });
+  const reset = () => confirm({
+    title: 'Send a reset link', cta: 'Send link',
+    lead: `To ${a.email ? mailMask(a.email) : 'the address on the account'}. It expires in 30 minutes. Check it is really ${kind === 'brand' && a.contact !== '—' ? a.contact : a.name} before you send.`,
+    reasonLabel: 'How you confirmed it is them',
+    reasons: kind === 'brand' ? ['Mail from the registered address', 'Called the registered number', 'Matched last invoice amount'] : ['OTP to the registered mobile', 'Matched last payout amount', 'Video call with ID'],
+    placeholder: 'Support ticket number or a short note',
+    done: 'Reset link sent · logged to audit',
+    onConfirm: ({ reason, note }) => api.passwordReset(a.userId, (reason === 'Other' ? note : reason) + (note && reason !== 'Other' ? ' · ' + note : ''))
+  });
+  const signOut = one => () => confirm({
+    title: one ? `Sign out ${one.d}` : 'Sign out of every device', cta: 'Sign out', danger: true,
+    lead: `${one ? 'That device' : `All ${ss.length} devices`} must sign in again. Nothing else changes.`,
+    reasons: ['Account may be compromised', 'Lost or shared device', 'They asked for it'],
+    done: 'Signed out · logged to audit',
+    onConfirm: ({ reason, note }) => api.revokeSessions(a.userId, one && one.id ? [one.id] : null, reason === 'Other' ? note : reason).then(reloadSessions)
+  });
+  return (
+    <section className="acc-sec acc-card acc-secu" aria-labelledby="accSec">
+      <h2 className="t-h3" id="accSec">Status and security</h2>
+      <div className="acc-status"><StPill a={a} /><p>{susp ? `Suspended${a.suspended && a.suspended.by ? ' by ' + a.suspended.by : ''}${a.suspended && a.suspended.at ? ' on ' + L.fmtDate(a.suspended.at) : ''}. ${(a.suspended && a.suspended.reason) || ''}` : (a.lastActive ? `Last active ${L.ago(a.lastActive)}.` : a.joined ? `Joined ${L.ago(a.joined)}.` : '')}</p></div>
+      {susp
+        ? <Lq className="lq-s lq-sm" data-do="reactivate" onClick={reactivate} disabled={noUser}><Icon n="refund" className="ic" />Reactivate</Lq>
+        : <Lq className="lq-ink lq-sm acc-susp" data-do="suspend" onClick={suspend} disabled={noUser}><Icon n="lock" className="ic" />Suspend account</Lq>}
+      <div className="acc-sub"><p className="t-label">Password reset help</p>
+        <p className="muted">{`Sends ${first} a reset link${a.email ? ' at ' + mailMask(a.email) : ''}. It expires in 30 minutes. Nobody at Linkloom sees or sets a password.`}</p>
+        <Lq className="lq-s lq-sm" data-do="reset" onClick={reset} disabled={susp || noUser} aria-disabled={susp ? 'true' : undefined}><Icon n="send" className="ic" />Send reset link</Lq></div>
+      <div className="acc-sub"><div className="row between"><p className="t-label">Signed in on</p><span className="t-cap muted">{`${ss.length} device${ss.length === 1 ? '' : 's'}`}</span></div>
+        {sst.err ? <p className="muted">{`Devices did not load: ${sst.err}`}</p> : !sst.list ? <p className="muted">Loading devices…</p> : ss.length ? <><ul className="acc-sess">{ss.map((x, i) => <li key={i}><span className="acc-sess-t"><b>{x.d}</b><span>{(x.p && x.p !== '—' ? x.p + ' · ' : 'Location unknown · ') + (x.at ? `since ${L.ago(x.at)}` : '')}</span></span><button className="btn-q" type="button" data-do="out" data-i={i} onClick={signOut(x)}>Sign out</button></li>)}</ul>
+          <Lq className="lq-s lq-sm" data-do="outall" onClick={signOut(null)}><Icon n="logout" className="ic" />Sign out of every device</Lq></> : <p className="muted">Not signed in anywhere.</p>}</div>
+    </section>
+  );
+}
 const Missing = ({ kind }) => <div className="view-in"><div className="empty"><img src="assets/step-04-orbit.svg" width="160" height="117" alt="" /><p className="t-h2">{`No ${kind} with that link.`}</p><p className="muted">Search the accounts list instead.</p><Lq className="lq-p" data-go="#accounts">Accounts</Lq></div></div>;
 
-/* ---------- creator detail: the public profile from GET /v1/creators/{id}/ and its reviews, read only ---------- */
-const PLATFORM = { instagram: 'Instagram', youtube: 'YouTube' };
-function LiveCreator({ id }) {
+/* ---------- creator detail ---------- */
+function TagPicker({ c, close }) {
+  const cats = [...new Set([...S().categories, ...c.tags])], MAX = 4;
+  const [pick, setPick] = useState(() => [...c.tags]);
+  const [busy, setBusy] = useState(false), [err, setErr] = useState('');
+  const toggle = v => () => setPick(p => (p.includes(v) ? p.filter(x => x !== v) : [...p, v]));
+  const save = () => {
+    setBusy(true); setErr('');
+    api.updateCreator(c.id, { tags: pick }).then(() => fetchCreator(c.id)).then(() => { close(); L.toast('Tags saved · logged to audit', 'check'); L.route(); }, e => { setBusy(false); setErr(why(e)); });
+  };
+  return (
+    <div className="adm-form"><p className="adm-lead">{`Pick up to ${MAX}. Brands filter search by these, so keep them to what ${c.name.split(' ')[0]} actually makes.`}</p>
+      <div className="chips acc-tagpick" role="group" aria-label="Categories">{cats.map(t => { const on = pick.includes(t); return <button className="chip" type="button" data-t={t} aria-pressed={on} disabled={!on && pick.length >= MAX} key={t} onClick={toggle(t)}>{t}</button>; })}</div>
+      <p className="help" aria-live="polite" data-n="">{`${pick.length} of ${MAX} chosen`}</p>{err ? <p className="err" role="alert">{err}</p> : null}<LogLine />
+      <div className="adm-btns"><Lq className="lq-p" data-save="" onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save tags'}</Lq><Lq className="lq-s" data-cancel="" onClick={() => close()}>Cancel</Lq></div></div>
+  );
+}
+function CreatorView({ id }) {
   const root = useRef(null);
   const rerender = useRerender();
-  const [got, setGot] = useState({ c: null, done: false });
-  const [revs, setRevs] = useState({ list: null, err: '' });
-  useEffect(() => {
-    ensureLive();
-    let on = true;
-    fetchCreator(id).then(c => on && setGot({ c, done: true }), () => on && setGot({ c: null, done: true }));
-    fetchReviews(id).then(list => on && setRevs({ list, err: '' }), e => on && setRevs({ list: null, err: (e && e.message) || 'They did not load.' }));
-    const off = store.on(why => { if (why === 'live') rerender(); });
-    return () => { on = false; off(); };
-  }, []);
-  const lv = live(), c = got.c || lv.creators.find(x => x.id === id) || null;
-  const shown = !!c;
-  useEffect(() => { if (c) document.title = c.name + ' · Linkloom'; }, [c && c.name]);
-  useLayoutEffect(() => { if (shown) mo('stagger', [...root.current.querySelectorAll('.acc-sec')]); }, [shown]);
-  if (!c) {
-    if (got.done && lv.status !== 'loading') return <Missing kind="creator" />;
-    return <div className="view-in"><div className="empty"><p className="t-h2">Loading this creator</p><p className="muted">Asking the Linkloom API. The server can take up to a minute to wake up.</p></div></div>;
-  }
+  const s = S(), c0 = s.creators.find(x => x.id === id);
+  const [tried, setTried] = useState(false), [busy, setBusy] = useState('');
+  useEffect(() => { let on = true; fetchCreator(id).catch(() => {}).finally(() => on && setTried(true)); return () => { on = false; }; }, [id]);
+  useLayoutEffect(() => { if (c0) mo('stagger', [...root.current.querySelectorAll('.acc-sec')]); }, [!!c0]);
+  if (!c0) return tried ? <Missing kind="creator" /> : <div className="view-in"><div className="empty"><p className="t-h3">Loading the account</p></div></div>;
+  const c = c0;
   ui().tab = 'creator';
-  const place = [c.city, c.region].filter((x, i, a) => x && x !== '—' && a.indexOf(x) === i).join(', ');
+  const orders = c.detail && c.detail.orders.length ? c.detail.orders : s.orders.filter(o => o.creator === c.id), live = orders.filter(o => ['funded', 'in_progress', 'submitted', 'revision', 'approved', 'disputed'].includes(o.phase));
+  const reps = c.detail && c.detail.reports.length ? c.detail.reports : s.reports.filter(r => (r.acct && r.acct.id === c.id) || String(r.target).includes(c.name));
+  const v = s.verifications.find(x => x.account === c.id);
+  const susp = c.status === 'suspended';
+  /* PATCH the creator, then fetch it again */
+  const patch = (what, body, msg) => { setBusy(what); api.updateCreator(c.id, body).then(() => fetchCreator(c.id)).then(() => reload(['featured'])).then(() => { setBusy(''); L.toast(msg + ' · logged to audit', 'check'); rerender(); }, e => { setBusy(''); L.toast(why(e), 'alert'); }); };
+  const badge = b => () => { const on = !c.badges.includes(b); patch('b' + b, { badges: on ? [...c.badges, b] : c.badges.filter(x => x !== b) }, on ? `${b} added` : `${b} removed`); };
+  const feature = () => patch('feat', { featured: !c.featured }, c.featured ? 'Removed from featured' : 'Featured on Discover');
+  const editTags = () => L.openSheet({ title: `Tags for ${c.name}`, body: o => <TagPicker c={c} close={o.close} /> });
+
   return (
     <div className="view-in acc acc-d" ref={root}>
       <a className="btn-q acc-back" href="#accounts"><Icon n="back" />Accounts</a>
       <header className="acc-mast">
         <Av kind="creator" name={c.name} cls="acc-av" />
-        <div className="acc-mast-t"><p className="acc-kind acc-kind--c"><i className="dot"></i>{'Creator' + (place ? ' · ' + place : '')}</p>
+        <div className="acc-mast-t"><p className="acc-kind acc-kind--c"><i className="dot"></i>{['Creator', c.city !== '—' ? c.city : '', c.joined ? 'joined ' + L.fmtDate(c.joined, { year: true }) : ''].filter(Boolean).join(' · ')}</p>
           <h1 className="t-h1">{c.name}</h1>
-          <p className="acc-mast-m">{c.handle ? <span className="acc-handle">{c.handle}</span> : <span className="muted">No handle yet</span>}{c.verified ? <span className="pill pill-ok"><Icon n="check" />Verified</span> : <span className="pill pill-paper"><Icon n="minus" />Not verified</span>}</p></div>
+          <p className="acc-mast-m">{c.handle ? <span className="acc-handle">{c.handle}</span> : <span className="muted">No handle yet</span>}<KycPill k={c.kyc} />{v && v.status === 'pending' ? <a className="btn-q" href={`#verify-${v.id}`}>Open KYC request</a> : null}</p></div>
+        <div className="acc-mast-s"><StPill a={c} /></div>
       </header>
       <dl className="acc-band">
-        <div><dt>Followers</dt><dd className="t-money">{c.followers ? L.compact(c.followers) : '—'}</dd><p>{c.followers ? 'across linked platforms' : 'not reported yet'}</p></div>
-        <div><dt>Engagement</dt><dd className="t-money">{c.er != null ? c.er.toFixed(1) + '%' : '—'}</dd><p>{c.er != null ? 'average per post' : 'not reported yet'}</p></div>
-        <div><dt>Rating</dt><dd className="t-money">{c.rating != null ? c.rating.toFixed(1) : '—'}</dd><p>{`${c.reviewCount} review${c.reviewCount === 1 ? '' : 's'}`}</p></div>
-        <div><dt>Starting price</dt><dd className="t-money">{c.startingPrice != null ? L.inr(c.startingPrice) : '—'}</dd><p>{c.startingPrice != null ? 'lowest active package' : 'no active package'}</p></div>
+        <div><dt>Followers</dt><dd className="t-money">{c.followers ? L.compact(c.followers) : '—'}</dd><p>Instagram and YouTube</p></div>
+        <div><dt>Engagement</dt><dd className="t-money">{c.er != null ? c.er.toFixed(1) + '%' : '—'}</dd><p>{c.er > 12 ? 'Unusually high, check for bought likes' : 'average per post'}</p></div>
+        <div><dt>Approved jobs</dt><dd className="t-money">{c.jobs}</dd><p>{c.rating ? `rated ${c.rating.toFixed(1)} by brands` : 'no ratings yet'}</p></div>
+        <div><dt>Paid out</dt><dd className="t-money">{L.inr(c.earned)}</dd><p>{live.length ? `${live.length} live order${live.length > 1 ? 's' : ''} in escrow` : 'nothing in escrow now'}</p></div>
       </dl>
       <div className="acc-grid">
         <div className="acc-col">
-          <section className="acc-sec" aria-labelledby="accProf"><h2 className="t-h2" id="accProf">Public profile</h2>
-            {c.bio ? <p className="muted">{c.bio}</p> : null}
-            <dl className="acc-kv">
-              <div><dt>Categories</dt><dd>{c.tags.length ? c.tags.join(', ') : <None t="None chosen" />}</dd></div>
-              <div><dt>Languages</dt><dd>{c.languages.length ? c.languages.join(', ') : <None t="None listed" />}</dd></div>
-              <div><dt>Main platform</dt><dd>{PLATFORM[c.primaryPlatform] || c.primaryPlatform || <None t="Not set" />}</dd></div>
-              {c.platforms.map(p => <div key={p.key}><dt>{PLATFORM[p.key] || p.key}</dt><dd>{p.handle ? '@' + p.handle : <None t="No handle" />}{p.linked ? <span className="acc-m is-ok"><Icon n="check" />Linked by login</span> : <span className="acc-m is-warn"><Icon n="info" />Not linked by login</span>}</dd></div>)}
-              <div><dt>Replies within</dt><dd>{c.repliesWithin || <None t="Not set" />}</dd></div>
-            </dl>
+          <section className="acc-sec" aria-labelledby="accBdg"><h2 className="t-h2" id="accBdg">Badges</h2>
+            <p className="muted">Badges show on the creator’s public profile and in brand search.</p>
+            <ul className="acc-badges">{BADGES.map(([b, d]) => { const on = c.badges.includes(b), need = b === 'Verified Pro' && c.kyc !== 'verified' && !on;
+              return <li key={b}><button className="acc-bd" type="button" data-badge={b} aria-pressed={on} disabled={need || susp || !!busy} aria-busy={busy === 'b' + b || undefined} onClick={badge(b)}>
+                <span className="acc-bd-i"><Icon n="verified" /></span><span className="acc-bd-t"><b>{b}</b><span>{need ? 'Needs verified KYC first' : d}</span></span>
+                <span className="acc-sw" aria-hidden="true"><i></i></span></button></li>; })}</ul>
           </section>
-          <section className="acc-sec" aria-labelledby="accRev"><h2 className="t-h2" id="accRev">Reviews</h2>
-            {revs.err ? <p className="muted">{`Reviews did not load: ${revs.err}`}</p>
-              : revs.list == null ? <p className="muted">Loading reviews.</p>
-              : revs.list.length ? <ul className="acc-reps">{revs.list.map((r, i) => <li key={r.id || i}><span className="acc-reps-t"><b>{`${'★'.repeat(r.stars)}${'☆'.repeat(Math.max(0, 5 - r.stars))} ${r.from}`}</b><span>{r.text + (r.at ? ' · ' + L.fmtDate(r.at) : '')}</span></span></li>)}</ul>
-              : <p className="muted">No reviews yet.</p>}
+          <section className="acc-sec" aria-labelledby="accTag"><div className="row between"><h2 className="t-h2" id="accTag">Category tags</h2><Lq className="lq-s lq-sm" data-tags="" onClick={editTags}><Icon n="edit" className="ic" />Edit tags</Lq></div>
+            <div className="chips acc-tagl">{c.tags.length ? c.tags.map(t => <span className="pill pill-line" key={t}>{t}</span>) : <p className="muted">No tags yet. Tags decide which brand searches they show up in.</p>}</div>
           </section>
-          <section className="acc-sec" aria-labelledby="accPkg"><h2 className="t-h2" id="accPkg">Packages</h2>
-            {c.packages == null ? <p className="muted">Loading packages.</p>
-              : c.packages.length ? <dl className="acc-kv">{c.packages.map(p => <div key={p.id}><dt>{p.title}</dt><dd>{[PLATFORM[p.platform] || p.platform, p.deliverables, p.deliveryDays != null ? `${p.deliveryDays} days` : '', p.price != null ? L.inr(p.price) : ''].filter(Boolean).join(' · ')}</dd></div>)}</dl>
-              : <p className="muted">No active packages.</p>}
+          <section className="acc-sec" aria-labelledby="accFeat"><h2 className="t-h2" id="accFeat">Featured</h2>
+            <button className="acc-bd acc-bd--wide" type="button" data-feature="" aria-pressed={!!c.featured} disabled={susp || !!busy} aria-busy={busy === 'feat' || undefined} onClick={feature}>
+              <span className="acc-bd-i acc-bd-i--star"><Icon n="star" /></span><span className="acc-bd-t"><b>{c.featured ? 'Featured on Discover' : 'Not featured'}</b><span>{susp ? 'Suspended accounts cannot be featured' : 'Shown in the top row of brand search. Order is set in Marketplace.'}</span></span>
+              <span className="acc-sw" aria-hidden="true"><i></i></span></button>
+            <a className="btn-q" href="#marketplace-featured">Featured order<Icon n="arrow" /></a>
+          </section>
+          <section className="acc-sec" aria-labelledby="accRep"><h2 className="t-h2" id="accRep">Reports</h2>
+            {reps.length ? <ul className="acc-reps">{reps.map(r => <li key={r.id}><a href={`#moderation-${r.id}`}><span className="acc-reps-t"><b>{r.reason}</b><span>{[r.target, 'by ' + r.by, L.ago(r.at)].filter(Boolean).join(' · ')}</span></span>
+              <span className={`pill ${r.status === 'open' ? 'pill-warn' : 'pill-paper'}`}>{r.status === 'open' ? <><Icon n="flag" />Open</> : r.status === 'actioned' ? <><Icon n="check" />{r.action || 'Actioned'}</> : 'Dismissed'}</span></a></li>)}</ul>
+              : <p className="muted">{`No reports against ${c.name.split(' ')[0]}.`}</p>}
           </section>
         </div>
         <div className="acc-col acc-col--side">
-          <section className="acc-sec acc-card" aria-labelledby="accAct"><h2 className="t-h3" id="accAct">Admin actions</h2>
-            <p className="muted">Suspend, badges, tags, featured, password-reset help and device sign-out are not connected yet: the backend has no admin endpoints for them.</p>
-            <p className="muted">Nothing on this page can be changed from here.</p>
+          <Security kind="creator" a={c} />
+          <section className="acc-sec acc-card" aria-labelledby="accOrd"><h2 className="t-h3" id="accOrd">Orders</h2>
+            {orders.length ? <ul className="acc-ord">{orders.slice(0, 5).map(o => <li key={o.id}><a href={`#orders-${o.id}`}><span><b>{o.title}</b><span>{(L.brand(o.brand) || {}).name || ''}</span></span><span className="num">{L.inr(o.amount)}</span></a></li>)}</ul> : <p className="muted">No orders yet.</p>}
           </section>
-          <section className="acc-sec acc-card" aria-labelledby="accMiss"><h2 className="t-h3" id="accMiss">Not shown yet</h2>
-            <p className="muted">KYC details are on the Verification desk. Orders and reports have no admin endpoint yet.</p>
-          </section>
+          <History a={c} />
         </div>
       </div>
     </div>
   );
 }
 
-const Brand = () => <NotConnected eyebrow="Accounts" title="Brand" what="Brand pages" needs={BRAND_NEEDS} />;
+/* ---------- brand detail ---------- */
+/* campaigns this brand posted on each of the last 30 days, from the campaigns the API returned */
+function postDays(b) {
+  const today = new Date(), days = [];
+  for (let i = 29; i >= 0; i--) { const d = new Date(today.getTime() - i * 864e5); days.push({ d, n: 0 }); }
+  const camp = (b.detail && b.detail.campaigns.length ? b.detail.campaigns : S().campaigns.filter(k => k.brand === b.id));
+  camp.forEach(k => { const i = days.findIndex(x => L.fmtDate(x.d.toISOString()) === L.fmtDate(k.posted)); if (i >= 0) days[i].n++; });
+  return days;
+}
+function PostingChart({ b }) {
+  const wrap = useRef(null), tip = useRef(null);
+  const days = postDays(b), max = Math.max(3, ...days.map(x => x.n));
+  const W = 300, H = 96, bw = 8, gap = 2, top = 8;
+  const y = v => H - (v / max) * (H - top);
+  const avgDay = b.postsAvg / 30;
+  const peak = days.reduce((m, x) => x.n > m.n ? x : m, days[0]);
+  const recent = days.slice(-3).reduce((n, x) => n + x.n, 0);
+  const pct = b.postsAvg ? Math.round((b.postsLast30 / b.postsAvg - 1) * 100) : null;
+  const day = x => L.fmtDate(x.d.toISOString());
+  /* hover tooltip */
+  const hide = () => { tip.current.hidden = true; wrap.current.querySelectorAll('.acc-ch-b.is-on').forEach(r => r.classList.remove('is-on')); };
+  const move = e => {
+    const r = e.target.closest('.acc-ch-h'); if (!r) return;
+    const i = +r.dataset.i, x = days[i], t = tip.current;
+    t.textContent = ''; const bEl = document.createElement('b'); bEl.textContent = `${x.n} posted`; const sEl = document.createElement('span'); sEl.textContent = day(x); t.append(bEl, sEl);
+    t.hidden = false; t.style.left = ((i + .5) / 30 * 100) + '%';
+    wrap.current.querySelectorAll('.acc-ch-b').forEach(n => n.classList.toggle('is-on', n.dataset.i === String(i)));
+  };
+  return (
+    <>
+      <div className="acc-cmp">
+        <div><span>Last 30 days</span><b className="t-money">{b.postsLast30}</b><i style={{ '--w': Math.min(100, b.postsLast30 / Math.max(b.postsLast30, b.postsAvg, 1) * 100) + '%' }}></i></div>
+        <div><span>Usual month</span><b className="t-money">{b.postsAvg ? b.postsAvg.toFixed(1) : 'None'}</b><i className="is-avg" style={{ '--w': (b.postsAvg ? b.postsAvg / Math.max(b.postsLast30, b.postsAvg, 1) * 100 : 0) + '%' }}></i></div>
+        <p className={spike(b) ? 'acc-cmp-bad' : ''}>{spike(b) ? <Icon n="alert" /> : null}{(b.postsAvg ? (pct > 0 ? `${pct}% above their usual pace` : pct < 0 ? `${-pct}% below their usual pace` : 'On their usual pace') : `New account: no usual pace yet`) + (spike(b) && peak.n ? `. ${b.postsLast30} posted in ${days.filter(x => x.n).length} days` : '') + '.'}</p>
+      </div>
+      <figure className="acc-ch">
+        <figcaption className="sr-only">Campaigns posted per day, last 30 days</figcaption>
+        <div className="acc-ch-w" ref={wrap} onPointerMove={move} onPointerLeave={hide}><svg viewBox={`0 0 ${W - gap} ${H}`} preserveAspectRatio="none" aria-hidden="true">
+          <line className="acc-ch-g" x1="0" x2={W} y1={y(max)} y2={y(max)} />
+          {days.map((x, i) => x.n ? <rect className="acc-ch-b" x={i * (bw + gap)} y={y(x.n)} width={bw} height={H - y(x.n)} rx="2" data-i={i} key={'b' + i} /> : <rect className="acc-ch-z" x={i * (bw + gap)} y={H - 1} width={bw} height="1" key={'b' + i} />)}
+          {avgDay ? <line className="acc-ch-avg" x1="0" x2={W} y1={y(avgDay)} y2={y(avgDay)} /> : null}
+          {days.map((x, i) => <rect className="acc-ch-h" x={i * (bw + gap)} y="0" width={bw + gap} height={H} data-i={i} key={'h' + i} />)}</svg>
+          <span className="acc-ch-ymax num" style={{ top: y(max) / H * 100 + '%' }}>{max}</span>
+          <div className="acc-tip" role="status" hidden ref={tip}></div></div>
+        <div className="acc-ch-x num"><span>{day(days[0])}</span><span>{day(days[15])}</span><span>Today</span></div>
+        <table className="sr-only"><caption>Campaigns posted per day</caption><tbody><tr><th scope="col">Day</th><th scope="col">Posts</th></tr>{days.filter(x => x.n).map((x, i) => <tr key={i}><td>{day(x)}</td><td>{x.n}</td></tr>)}</tbody></table>
+      </figure>
+      <p className="t-cap muted">{`Bars: campaigns posted each day.${avgDay ? ' Dashed line: their usual daily pace.' : ''} Last 3 days: ${recent}.`}</p>
+    </>
+  );
+}
+function BrandView({ id }) {
+  const root = useRef(null);
+  const s = S(), b = s.brands.find(x => x.id === id);
+  const [tried, setTried] = useState(false);
+  useEffect(() => { let on = true; fetchBrand(id).catch(() => {}).finally(() => on && setTried(true)); return () => { on = false; }; }, [id]);
+  useLayoutEffect(() => { if (b) mo('stagger', [...root.current.querySelectorAll('.acc-sec')]); }, [!!b]);
+  if (!b) return tried ? <Missing kind="brand" /> : <div className="view-in"><div className="empty"><p className="t-h3">Loading the account</p></div></div>;
+  ui().tab = 'brand';
+  const camps = b.detail && b.detail.campaigns.length ? b.detail.campaigns : s.campaigns.filter(k => k.brand === b.id), v = s.verifications.find(x => x.account === b.id);
+  const reps = b.detail && b.detail.reports.length ? b.detail.reports : s.reports.filter(r => (r.acct && r.acct.id === b.id) || String(r.target).includes(b.name));
+  const free = freeMail(b.email), st = gstState(b.gstin);
+  return (
+    <div className="view-in acc acc-d" ref={root}>
+      <a className="btn-q acc-back" href="#accounts"><Icon n="back" />Accounts</a>
+      <header className="acc-mast">
+        <Av kind="brand" name={b.name} cls="acc-av" />
+        <div className="acc-mast-t"><p className="acc-kind acc-kind--b"><i className="dot"></i>{`Brand${b.city && b.city !== '—' ? ' · ' + b.city : ''}${b.joined ? ' · joined ' + L.fmtDate(b.joined, { year: true }) : ''}`}</p>
+          <h1 className="t-h1">{b.name}</h1>
+          <p className="acc-mast-m"><span>{b.contact}</span><KycPill k={b.verify} />{v && v.status === 'pending' ? <a className="btn-q" href={`#verify-${v.id}`}>Open verification request</a> : null}</p></div>
+        <div className="acc-mast-s"><StPill a={b} /></div>
+      </header>
+      <dl className="acc-band">
+        <div><dt>Posted in 30 days</dt><dd className="t-money">{b.postsLast30}</dd><p>{spike(b) ? 'well above normal' : 'campaigns'}</p></div>
+        <div><dt>Open now</dt><dd className="t-money">{b.open}</dd><p>campaigns taking bids</p></div>
+        <div><dt>Paid via escrow</dt><dd className="t-money">{L.inr(b.spent)}</dd><p>all time</p></div>
+        <div><dt>Reports</dt><dd className="t-money">{b.reports}</dd><p>{`${reps.filter(r => r.status === 'open').length} open in moderation`}</p></div>
+      </dl>
+      <div className="acc-grid">
+        <div className="acc-col">
+          <section className="acc-sec" aria-labelledby="accPost"><h2 className="t-h2" id="accPost">Campaign posting</h2><PostingChart b={b} /></section>
+          <section className="acc-sec" aria-labelledby="accCo"><h2 className="t-h2" id="accCo">Company</h2>
+            <dl className="acc-kv">
+              <div><dt>Legal name</dt><dd>{b.legal ? b.legal : <None />}</dd></div>
+              <div><dt>GSTIN</dt><dd>{b.gstin ? <span className="acc-mono">{b.gstin}</span> : <None />}{b.gstin ? (b.regVerified ? <span className="acc-m is-ok"><Icon n="check" />{'Verified on the GST portal' + (st ? ' · ' + st : '')}</span> : <span className="acc-m is-warn"><Icon n="info" />Not checked yet</span>) : <span className="acc-m is-bad"><Icon n="alert" />No company registration</span>}</dd></div>
+              <div><dt>Company PAN</dt><dd>{b.pan ? <span className="acc-mono">{mask(b.pan)}</span> : b.gstin ? <><span className="acc-mono">{mask(b.gstin.slice(2, 12))}</span><span className="acc-m is-ok"><Icon n="check" />Read from the GSTIN</span></> : <None t="—" />}</dd></div>
+              {b.cin ? <div><dt>CIN</dt><dd><span className="acc-mono">{b.cin}</span></dd></div> : null}
+              <div><dt>Business mail</dt><dd>{b.email || <None />}{free ? <span className="acc-m is-bad"><Icon n="alert" />Free mailbox, not a company domain</span> : b.mailVerified ? <span className="acc-m is-ok"><Icon n="check" />Verified by link</span> : <span className="acc-m is-bad"><Icon n="alert" />Not verified</span>}</dd></div>
+            </dl>
+          </section>
+          <section className="acc-sec" aria-labelledby="accCamp"><h2 className="t-h2" id="accCamp">Campaigns</h2>
+            {camps.length ? <ul className="acc-reps">{camps.map(k => <li key={k.id}><a href={`#marketplace-${k.id}`}><span className="acc-reps-t"><b>{k.title}</b><span>{[k.platform === 'youtube' ? 'YouTube' : 'Instagram', L.inr(k.budget), `${k.bids} bids`, L.ago(k.posted)].filter(Boolean).join(' · ')}</span></span>
+              {k.flags ? <span className="pill pill-err"><Icon n="alert" />{`${k.flags} flag${k.flags > 1 ? 's' : ''}`}</span> : <span className="pill pill-paper">{k.status === 'live' ? 'Live' : k.status}</span>}</a></li>)}</ul> : <p className="muted">No campaigns posted yet.</p>}
+          </section>
+        </div>
+        <div className="acc-col acc-col--side"><Security kind="brand" a={b} /><History a={b} /></div>
+      </div>
+    </div>
+  );
+}
 
-L.register('accounts', { title: 'Accounts', nav: 'accounts', Component: List });
-L.register('creator', { title: id => (live().creators.find(c => c.id === id) || {}).name || 'Creator', nav: 'accounts', Component: ({ param }) => <LiveCreator id={param} /> });
-L.register('brand', { title: 'Brand', nav: 'accounts', Component: Brand });
+const SOFT = ['verifications', 'reports', 'orders', 'campaigns', 'categories', 'audit'];
+L.register('accounts', { title: 'Accounts', nav: 'accounts', Component: needs(['creators', 'brands'], List) });
+L.register('creator', { title: id => (S().creators.find(c => c.id === id) || {}).name || 'Creator', nav: 'accounts', Component: needs(['creators'], ({ param }) => <CreatorView id={param} />, SOFT) });
+L.register('brand', { title: id => (S().brands.find(b => b.id === id) || {}).name || 'Brand', nav: 'accounts', Component: needs(['brands'], ({ param }) => <BrandView id={param} />, SOFT) });

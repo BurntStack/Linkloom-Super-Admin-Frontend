@@ -18,8 +18,8 @@ const inr = (paise, o = {}) => {                       // 1250000 -> "₹12,500"
   return (neg || o.sign) ? '−' + s : s;
 };
 const compact = n => n >= 1e5 ? (n / 1e5).toFixed(n % 1e5 ? 1 : 0).replace(/\.0$/, '') + 'L' : n >= 1e3 ? Math.round(n / 1e3) + 'K' : String(n);
-const D = s => new Date(s + (s.length === 10 ? 'T12:00:00+05:30' : ''));
-const fmtDate = (s, o = {}) => D(s).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', ...(o.year ? { year: 'numeric' } : {}), timeZone: 'Asia/Kolkata' });
+const D = s => new Date(String(s || '') + (String(s || '').length === 10 ? 'T12:00:00+05:30' : ''));
+const fmtDate = (s, o = {}) => !s || !Number.isFinite(D(s).getTime()) ? '—' : D(s).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', ...(o.year ? { year: 'numeric' } : {}), timeZone: 'Asia/Kolkata' });
 const istDay = d => Math.floor((d.getTime() + 19800000) / 864e5);          // calendar day in IST
 const daysLeft = s => istDay(D(s)) - istDay(new Date());
 const ago = s => { const t = D(s).getTime(); if (!Number.isFinite(t)) return ''; const m = Math.max(0, Math.round((Date.now() - t) / 6e4)); if (m < 60) return m + ' min ago'; const h = Math.round(m / 60); if (h < 24) return h + ' h ago'; const d = Math.round(h / 24); return d === 1 ? 'yesterday' : d + ' days ago'; };
@@ -54,12 +54,31 @@ function route() {
 const router = { get current() { return current; }, on(f) { routeSubs.add(f); return () => routeSubs.delete(f); } };
 addEventListener('hashchange', route);
 
-/* ---------- chrome numbers (side menu badges): read by the shell components ----------
-   Only what the API can answer: pending verifications once the queue has loaded, and the admin's unread notifications. */
+/* ---------- chrome numbers (side menu badges, escrow slip): read by the shell components ----------
+   GET /v1/admin/system/counts/ when it has loaded, else what the loaded lists say. */
+const cnt = (o, ...k) => { if (!o) return null; for (const x of k) { let v = x.split('.').reduce((a, y) => (a == null ? a : a[y]), o); if (v && typeof v === 'object' && 'amount' in v) v = v.amount; const n = Number(v); if (v != null && typeof v !== 'object' && Number.isFinite(n)) return n; } return null; };
 const chrome = () => {
-  const lv = LLD_DATA.live;
-  return { verify: lv && lv.vstatus === 'ready' ? lv.verifications.filter(v => v.status === 'pending').length : 0, bell: (lv && lv.unread) || 0 };
+  const s = LLD_DATA, c = s.counts, d = s.dashboard;
+  return {
+    verify: cnt(c, 'verifications', 'pendingVerifications', 'verifications.pending') ?? s.verifications.filter(v => v.status === 'pending').length,
+    moderation: cnt(c, 'reports', 'openReports', 'abuseReports', 'moderation') ?? s.reports.filter(r => r.status === 'open').length,
+    orders: cnt(c, 'disputes', 'openDisputes', 'disputes.open') ?? s.disputes.filter(x => x.status === 'open').length,
+    bell: cnt(c, 'notifications', 'unreadNotifications') ?? s.notifications.filter(n => !n.read).length,
+    held: escrowHeld(), live: cnt(d, 'liveOrders', 'orders.live', 'escrow.orders') ?? liveOrders().length, audit: cnt(d, 'audit.entries', 'auditEntries') ?? s.audit.length,
+    known: !!(c || d || (s.res && s.res.orders && s.res.orders.loaded))
+  };
 };
+/* platform-wide escrow: money paid in on orders not yet released or refunded */
+const LIVE = ['funded', 'in_progress', 'submitted', 'revision', 'approved', 'disputed'];
+const liveOrders = () => LLD_DATA.orders.filter(o => LIVE.includes(o.phase));
+const escrowHeld = () => cnt(LLD_DATA.dashboard, 'escrow.held', 'escrowHeld', 'escrow.total', 'escrowBalance', 'escrow') ?? liveOrders().reduce((n, o) => n + o.amount, 0);
+/* an account by id: the loaded lists first, then the people seen inside other records */
+const STUB = { name: '—', handle: '', city: '—', status: 'active', kyc: 'not_started', verify: 'not_started', badges: [], tags: [], followers: 0, jobs: 0, earned: 0, reports: 0, postsLast30: 0, postsAvg: 0, open: 0, spent: 0, email: '', contact: '—' };
+const creator = id => LLD_DATA.creators.find(c => c.id === id) || (LLD_DATA.refs && LLD_DATA.refs.c[id]) || { ...STUB, id: id || '', name: 'Creator', stub: true };
+const brand = id => LLD_DATA.brands.find(b => b.id === id) || (LLD_DATA.refs && LLD_DATA.refs.b[id]) || { ...STUB, id: id || '', name: 'Brand', stub: true };
+/* the server writes the audit log for every admin action; nothing is logged in the browser */
+const audit = () => ({ id: '', hash: '' });
+const ageFrom = dob => { const b = D(dob); if (!Number.isFinite(b.getTime())) return null; const t = new Date(); let a = t.getFullYear() - b.getFullYear(); const m = t.getMonth() - b.getMonth(); if (m < 0 || (m === 0 && t.getDate() < b.getDate())) a--; return a; };
 
 /* one letter, like the creator app: a two-letter avatar such as "AI" reads as an AI button */
 const initials = n => (String(n || '').trim()[0] || '?').toUpperCase();
@@ -150,8 +169,9 @@ function icon(n, cls = '') {
 /* ---------- motion API (implemented in motion.js; safe no-ops until then) ---------- */
 const motion = { enter() {}, stagger() {}, count(el, to, fmt) { if (el) el.textContent = fmt ? fmt(to) : to; }, press() {}, swipe() { return () => {}; }, reveal() {}, celebrate() {}, flip(fn) { fn && fn(); } };
 
-Object.assign(LLD, { RM, $, $$, esc, inr, compact, fmtDate, daysLeft, ago, D, store, register, go, route, views, router, chrome, sheets,
-  current: () => current, openSheet, closeSheet, toast, icon, iconPath: n => P[n] || P.info, initials, motion });
+Object.assign(LLD, { RM, $, $$, esc, inr, compact, fmtDate, daysLeft, ago, ageFrom, D, store, register, go, route, views, router, chrome, sheets,
+  current: () => current, escrowHeld, liveOrders, creator, brand, audit, openSheet, closeSheet, toast, icon, iconPath: n => P[n] || P.info, initials, motion,
+  today: () => new Date() });
 
 LLD.boot = () => {
   if (booted) return;

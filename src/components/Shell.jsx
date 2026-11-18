@@ -1,4 +1,4 @@
-/* The app chrome: sidebar (desktop), top bar and tab bar (phone). Badges show only numbers the API gives. */
+/* The app chrome: sidebar (desktop), top bar and tab bar (phone). Badges and escrow come from GET /v1/admin/system/counts/ and dashboard/. */
 import L from '../lib/core.js';
 import { useStore } from '../lib/hooks.js';
 import Icon from './Icon.jsx';
@@ -18,21 +18,23 @@ export function Sidebar({ nav }) {
           <a href="#verify" data-nav="verify" {...cur(nav, 'verify')}>Verification <Badge n={c.verify} /></a>
           <a href="#accounts" data-nav="accounts" {...cur(nav, 'accounts')}>Accounts</a>
           <a href="#marketplace" data-nav="marketplace" {...cur(nav, 'marketplace')}>Marketplace</a>
-          <a href="#moderation" data-nav="moderation" {...cur(nav, 'moderation')}>Moderation</a>
-          <a href="#orders" data-nav="orders" {...cur(nav, 'orders')}>Orders &amp; escrow</a>
+          <a href="#moderation" data-nav="moderation" {...cur(nav, 'moderation')}>Moderation <Badge n={c.moderation} /></a>
+          <a href="#orders" data-nav="orders" {...cur(nav, 'orders')}>Orders &amp; escrow <Badge n={c.orders} /></a>
           <a href="#finance" data-nav="finance" {...cur(nav, 'finance')}>Financials</a>
           <a href="#audit" data-nav="audit" {...cur(nav, 'audit')}>Audit log</a>
         </nav>
-        <p className="nav-note">Linkloom admin console</p>
+        <p className="nav-note">Admin console · every action is logged</p>
       </div>
       <a className="sbox slipbox" href="#orders">
         <span className="t-cap slip-l">Escrow balance</span>
-        <span className="t-money t-money-m">—</span>
-        <span className="slip-plan">Not connected yet: the backend has no escrow endpoint for admins.</span>
+        <span className="t-money t-money-m">{c.known ? L.inr(c.held) : '—'}</span>
+        {/* escrow pills always carry the lock */}
+        <span className="pill pill-escrow" hidden={!c.live}><Icon n="lock" />{` ${c.live} live orders`}</span>
+        <span className="slip-plan">{c.audit ? `Audit log · ${c.audit} entries, sealed` : 'Audit log · sealed on the server'}</span>
       </a>
       <a className="sbox me" href="#security" data-nav="security" {...cur(nav, 'security')}>
         <span className="avatar" data-me-initials="">{L.initials(s.me.name)}</span>
-        <span className="me-t"><b>{s.me.name}</b><span>{s.me.email || s.me.role}</span></span>
+        <span className="me-t"><b>{s.me.name}</b><span>{`${s.me.role || 'Admin'} · MFA on`}</span></span>
       </a>
     </aside>
   );

@@ -15,7 +15,7 @@ import { mo } from '../lib/mo.js';
 import Icon from '../components/Icon.jsx';
 import Lq from '../components/Lq.jsx';
 import { adminLogin, verifyMfa, logout as apiLogout, whenSessionEnds } from '../lib/api.js';
-import { forgetSession, ensureVerifications } from '../lib/live.js';
+import { forget, ensureChrome, roleName } from '../lib/admin.js';
 
 /* the email domain admins must use; VITE_ADMIN_EMAIL_DOMAIN="" lets any address try */
 const DOMAIN = import.meta.env.VITE_ADMIN_EMAIL_DOMAIN ?? 'linkloom.in';
@@ -32,13 +32,13 @@ export function enterLive(user) {
   const name = user.fullName || user.displayName || user.email || 'Admin';
   store.set(s => {
     s.session.signedIn = true; s.session.live = true; s.session.since = new Date().toISOString();
-    s.me = { id: String(user.id || ''), name, email: user.email || '', role: 'Admin' };
+    s.me = { id: String(user.id || ''), name, email: user.email || '', role: roleName(user), adminRole: user.adminRole || '' };
   }, 'signed-in');
-  ensureVerifications();                                   // so the side menu counts the real queue at once
+  ensureChrome();                                          // the side menu numbers, at once
 }
 function endLive() {
-  forgetSession();
-  store.set(s => { s.session.signedIn = false; s.session.live = false; s.me = { id: '', name: '', email: '', role: '' }; }, 'signed-out');
+  forget();
+  store.set(s => { s.session.signedIn = false; s.session.live = false; s.me = { id: '', name: '', email: '', role: '', adminRole: '' }; }, 'signed-out');
 }
 /* the API refused the admin's token and could not refresh it: back to sign-in */
 whenSessionEnds(() => { if (store.s.session.signedIn) { endLive(); L.closeSheet(true); L.go('#login-expired'); } });

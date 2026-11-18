@@ -28,23 +28,28 @@ npm run preview
 
 ## Data
 
-**The console holds no sample or demo data.** Everything it shows comes from the Linkloom API. Where the backend has no endpoint yet, the screen says it is not connected and names the endpoint it needs.
+**The console holds no sample or demo data.** Everything it shows comes from the Linkloom admin API (`/v1/admin/`), loaded by `src/lib/admin.js` after an admin signs in. Every admin action is sent to the API, and the server writes the audit log entry.
 
-| Screen | Endpoint | State |
+| Screen | Reads | Actions |
 |---|---|---|
-| Sign-in | `POST /v1/admin/auth/login/`, `POST /v1/admin/auth/mfa/verify/`, `POST /v1/admin/auth/logout/`, `POST /v1/auth/token/refresh/` | Connected |
-| Command | creators, campaigns and the verification queue below | Partly connected |
-| Verification desk, queue and request | `GET /v1/admin/verifications/`, `GET /v1/admin/verifications/{id}/` | Connected, read only |
-| Verification desk, ID document | `GET /v1/uploads/{id}/download-url/` | Connected (the backend may refuse admins) |
-| Accounts, creators | `GET /v1/creators/`, `GET /v1/creators/{id}/`, `GET /v1/creators/{id}/reviews/` | Connected, read only |
-| Accounts, brands | none yet | Not connected |
-| Marketplace, campaigns | `GET /v1/campaigns/` | Connected, read only |
-| Marketplace, bids, reviews, featured, categories | none yet | Not connected |
-| Moderation, Orders and escrow, Financials, Audit log | none yet | Not connected |
-| Security | `GET /v1/auth/me/`, `POST /v1/auth/password/change/`, `POST /v1/auth/logout-all/` | Connected; admin team, sessions and authenticator set-up not connected |
-| Notifications (the bell) | `GET /v1/notifications/`, `GET /v1/notifications/unread-count/`, `POST /v1/notifications/read-all/` | Connected |
+| Command | `GET /v1/admin/system/dashboard/`, `counts/`, and the lists below | — |
+| Verification desk | `GET /v1/admin/verifications/`, `GET /v1/admin/verifications/{id}/` | `POST …/{id}/approve/`, `reject/`, `request-info/` |
+| Accounts | `GET /v1/admin/users/creators/`, `brands/` (lists and details), `GET /v1/admin/users/accounts/{user_id}/sessions/` | `PATCH /v1/admin/users/creators/{id}/` (badges, tags, featured); `POST /v1/admin/users/accounts/{user_id}/suspend/`, `reactivate/`, `password-reset/`, `sessions/revoke/` |
+| Marketplace | `GET /v1/admin/campaigns/`, `GET /v1/admin/moderation/bid-alerts/`, `reviews/`, `GET /v1/admin/users/featured-creators/`, `categories/` | `POST /v1/admin/campaigns/{id}/approve/`, `reject/`, `hide/`, `remove/`, `restore/`; bid alerts `freeze-bids/`, `suspend-accounts/`, `warn/`, `dismiss/`; reviews `delete/`, `keep/`; `PUT …/featured-creators/order/`; categories `POST`, `PATCH`, `merge/` |
+| Moderation | `GET /v1/admin/moderation/abuse-reports/`, `…/{id}/` | `POST …/{id}/remove/`, `warn/`, `suspend-account/`, `dismiss/` |
+| Orders and escrow | `GET /v1/admin/finance/orders/`, `…/{id}/`, `disputes/`, `rules/` | `POST …/orders/{id}/force-release/`, `refund/` (with an `Idempotency-Key`), `POST …/disputes/{id}/resolve/` |
+| Financials | `GET /v1/admin/finance/summary/?months=6`, `rules/`, `payouts/` | `GET …/payouts/export/` (CSV) |
+| Audit log | `GET /v1/admin/system/audit-log/` | `GET …/audit-log/verify/`, `GET …/audit-log/export/` (CSV) |
+| Alerts (the bell) | `GET /v1/admin/system/notifications/` | `POST …/{id}/read/`, `read-all/` |
+| Security | `GET /v1/auth/me/` | `POST /v1/auth/password/change/`, `POST /v1/auth/logout-all/` |
 
-Nothing an admin decides can be sent yet (approve, reject, suspend, hide, release, refund): the backend has no endpoints for it, so those buttons are switched off and the screens say why. The endpoints the backend team needs are in the backend requirements document.
+Every new or edited campaign waits under **Needs approval** in Marketplace until an admin approves or rejects it.
+
+What each admin can see depends on their `adminRole` (`super_admin`, `trust_safety`, `finance`). A list the role cannot read is left out, and the screen says so.
+
+The backend guide names the endpoints but not every field, so the mappers in `src/lib/admin.js` read the obvious field names and fall back to empty values, never to made-up ones. If a screen shows "Not provided" where the API does send a value, the field name needs adding to the mapper.
+
+Still not connected: the admin team list and admin sessions on Security (no endpoint yet).
 
 ### Signing in
 
@@ -55,7 +60,6 @@ Nothing an admin decides can be sent yet (approve, reject, suspend, hide, releas
 
 Admin emails must end in `@linkloom.in`; set `VITE_ADMIN_EMAIL_DOMAIN` to change that, or to an empty value to allow any address.
 
-The verification records' shape is not documented, so `src/lib/live.js` reads them with the KYC field names the website uses (`status`, `steps.pan / id / bank`, `rejectionReason`, `submittedAt`) and shows any other fields as they came, under "Other fields from the API".
 
 ### The API proxy
 
@@ -68,10 +72,11 @@ The API sends no CORS headers, so the browser calls it through a same-origin `/a
 | `index.html` | Vite entry page |
 | `src/main.jsx` | Entry: styles, runtime, screens, then the React root |
 | `src/App.jsx` | App shell and the route outlet |
-| `src/components/` | Shared components: `Shell` (sidebar, top bar, tab bar), `Icon`, `Lq` (liquid button), `Av` (avatar), `Count`, `SheetHost`, `AlertsSheet`, `NotConnected` |
+| `src/components/` | Shared components: `Shell` (sidebar, top bar, tab bar), `Icon`, `Lq` (liquid button), `Av` (avatar), `Count`, `SheetHost`, `AlertsSheet`, `Needs` (loads a screen's data first), `Select`, `NotConnected` |
 | `src/screens/` | One file per screen; each registers its route(s) |
 | `src/lib/core.js` | Runtime: hash router (`#name` or `#name-param`), store, sheets, toasts, formatting helpers |
-| `src/lib/api.js`, `src/lib/live.js` | Client for the Linkloom API (sign-in, tokens, requests), and everything the console loads from it |
+| `src/lib/api.js`, `src/lib/admin.js` | Client for the Linkloom API (sign-in, tokens, requests), and everything the console loads from and sends to `/v1/admin/` |
+| `src/lib/adm.jsx`, `src/lib/mx.jsx` | The confirm and reason sheets every admin action goes through (they wait for the API's answer) |
 | `src/lib/hooks.js` | React bindings: `useStore`, `useRoute`, `useSheets`, `useRerender` |
 | `src/lib/motion.js` | The animation layer (respects `prefers-reduced-motion`) |
 | `src/lib/ui-select.js` | Custom listbox for `<select class="select">` controls |
@@ -89,8 +94,8 @@ The API sends no CORS headers, so the browser calls it through a same-origin `/a
 | `#verify`, `#verify-<id>` | Verification desk | `Verify.jsx` |
 | `#accounts`, `#creator-<id>`, `#brand-<id>` | Accounts | `Accounts.jsx` |
 | `#marketplace`, `#marketplace-<tab>` | Marketplace | `Marketplace.jsx` |
-| `#moderation` | Moderation | `Moderation.jsx` |
-| `#orders` | Orders and escrow | `Orders.jsx` |
+| `#moderation`, `#moderation-<id>` | Moderation | `Moderation.jsx` |
+| `#orders`, `#orders-disputes`, `#orders-<id>` | Orders and escrow | `Orders.jsx` |
 | `#finance` | Financials | `Finance.jsx` |
 | `#audit` | Audit log | `Audit.jsx` |
 | `#security` | Security | `Security.jsx` |

@@ -9,3 +9,6 @@ html{scroll-padding-top:env(safe-area-inset-top,0px)}
    their nodes; .no-anchor on a region keeps scrolling (and the FLIP animations that measure around it) the same. */
 .no-anchor{overflow-anchor:none}
 
+
+/* a screen whose data the admin's role cannot see in full */
+.needs-note{font-size:13px;line-height:18px;margin:0 0 16px}

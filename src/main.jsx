@@ -17,7 +17,7 @@ import './styles/shell.css';
 
 import L, { data } from './lib/core.js';
 import { auth, signedInLive } from './lib/api.js';
-import { ensureVerifications } from './lib/live.js';
+import { ensureChrome, roleName } from './lib/admin.js';
 import './lib/ui-select.js';
 import './lib/motion.js';
 import './screens/index.js';
@@ -27,10 +27,10 @@ import App from './App.jsx';
 if (signedInLive()) {
   const u = auth().user;
   data.session.signedIn = true; data.session.live = true;
-  data.me = { id: String(u.id || ''), name: u.fullName || u.displayName || u.email || 'Admin', email: u.email || '', role: 'Admin' };
+  data.me = { id: String(u.id || ''), name: u.fullName || u.displayName || u.email || 'Admin', email: u.email || '', role: roleName(u), adminRole: u.adminRole || '' };
 }
 
 const root = createRoot(document.getElementById('root'));
-if (data.session.live) ensureVerifications();
+if (data.session.live) ensureChrome();
 L.boot();
 flushSync(() => root.render(<App />));
