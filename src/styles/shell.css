@@ -8,3 +8,9 @@ html{scroll-padding-top:env(safe-area-inset-top,0px)}
 /* The original screens redrew whole regions, so the browser never scroll-anchored on their content. Components keep
    their nodes; .no-anchor on a region keeps scrolling (and the FLIP animations that measure around it) the same. */
 .no-anchor{overflow-anchor:none}
+
+/* sign-in: Google's own button, then a divider before the password form */
+.auth-google{min-height:44px;display:flex;justify-content:center}
+.auth-google[aria-busy]{opacity:.6;pointer-events:none}
+.auth-or{display:flex;align-items:center;gap:12px;font-size:13px;line-height:18px;color:var(--ll-slate)}
+.auth-or::before,.auth-or::after{content:"";flex:1;height:1px;background:var(--ll-rule)}

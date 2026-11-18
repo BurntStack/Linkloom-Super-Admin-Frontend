@@ -89,8 +89,14 @@ export async function list(path, { query, signal, max = 500, auth: useAuth } = {
 /* ---------- sign-in ---------- */
 /* Returns the user. Throws ApiError: INVALID_CREDENTIALS / AUTH_INVALID for a wrong email or password,
    NOT_ADMIN when the account exists but is not an admin (its tokens are thrown away at once). */
-export async function login(identifier, password) {
-  const { res, body } = await raw('/v1/auth/login/', { method: 'POST', body: { identifier, password } });
+export const login = (identifier, password) => signInWith('/v1/auth/login/', { identifier, password });
+
+/* Google: the ID token from Google Identity Services. No `role` is sent: that field is for signing up a creator or
+   brand, and an admin console must never create one. */
+export const googleLogin = idToken => signInWith('/v1/auth/google/', { idToken });
+
+async function signInWith(path, payload) {
+  const { res, body } = await raw(path, { method: 'POST', body: payload });
   if (!res.ok || !body || body.success === false) throw fail(res, body);
   const d = body.data || {};
   if (!d.access || !d.user) throw new ApiError(res.status, 'The Linkloom API did not answer as expected.');

@@ -1,6 +1,7 @@
 /* Sign-in (#login, #login-out, #login-expired) for the Super Admin console. Focus shell, no auth needed.
-   An admin signs in with the email and password of their Linkloom account, through the website's own
-   POST /v1/auth/login/. Only an account whose role is "admin" gets in; any other account's tokens are thrown away.
+   An admin signs in with Google (POST /v1/auth/google/, the website's own Google sign-in) or with the email and
+   password of their Linkloom account (POST /v1/auth/login/). Only an account whose role is "admin" gets in; any other
+   account's tokens are thrown away. A Google address outside the admin domain is turned away before anything is sent.
    The backend has no authenticator (second) step for admins yet, so sign-in is one step.
    Also exports:
    - signOut({ param })     ends this session on the API, lands on #login-out
@@ -11,7 +12,8 @@ import L, { store } from '../lib/core.js';
 import { mo } from '../lib/mo.js';
 import Icon from '../components/Icon.jsx';
 import Lq from '../components/Lq.jsx';
-import { login as apiLogin, logout as apiLogout, whenSessionEnds } from '../lib/api.js';
+import { login as apiLogin, googleLogin, logout as apiLogout, whenSessionEnds } from '../lib/api.js';
+import { googleEnabled, renderGoogleButton, tokenEmail } from '../lib/google.js';
 import { forgetSession, ensureVerifications } from '../lib/live.js';
 
 /* the email domain admins must use; VITE_ADMIN_EMAIL_DOMAIN="" lets any address try */
@@ -70,8 +72,9 @@ function Login({ param }) {
   const [show, setShow] = useState(false);
   const [busy, setBusy] = useState(false);
   const [showFlash] = useState(() => !!FLASH[param]);
-  const email = useRef(null), pw = useRef(null), form = useRef(null), live = useRef(null);
-  const alive = useRef(true);
+  const email = useRef(null), pw = useRef(null), form = useRef(null), live = useRef(null), gbtn = useRef(null);
+  const [gErr, setGErr] = useState('');
+  const alive = useRef(true), inFlight = useRef(false);   // inFlight: read by Google's callback, which is attached once
   useLayoutEffect(() => { if (signedIn) location.replace('#home'); }, []);
   useEffect(() => {
     alive.current = true;
@@ -79,12 +82,45 @@ function Login({ param }) {
     addEventListener('online', onNet); addEventListener('offline', onNet);
     return () => { alive.current = false; removeEventListener('online', onNet); removeEventListener('offline', onNet); };
   }, []);
+  /* Google's own button; a credential from it signs in the same way as a password */
+  useEffect(() => {
+    if (signedIn || !googleEnabled() || !gbtn.current) return;
+    return renderGoogleButton(gbtn.current, { hostedDomain: DOMAIN || undefined, onError: m => setGErr(m), onCredential: signInGoogle });
+  }, []);
   if (signedIn) return null;
   const say = t => { live.current.textContent = t; };
   const clr = id => setErrs(e => (e[id] ? { ...e, [id]: null } : e));
 
+  const failed = (err, viaGoogle) => {
+    if (!alive.current) return;
+    flushSync(() => setBusy(false));
+    const code = err && err.code, st = err && err.status;
+    const show = m => flushSync(() => (viaGoogle ? setGErr(m) : setApiErr(m)));
+    if (code === 'NOT_ADMIN') { if (viaGoogle) show('This Google account is not a Linkloom admin account.'); else { flushSync(() => setErrs({ email: 'This Linkloom account is not an admin account.' })); email.current.focus(); } return true; }
+    if (code === 'RATE_LIMITED' || st === 429) { show('Too many sign-in attempts. Wait a minute, then try again.'); return true; }
+    if (code === 'NETWORK' || !st || st >= 500) { show('Could not reach Linkloom. Check your connection, then try again in a minute.'); return true; }
+    if (code === 'GOOGLE_EMAIL_UNVERIFIED') { show('Your Google account\'s email is not verified with Google yet.'); return true; }
+    if (viaGoogle) { show(code === 'GOOGLE_TOKEN_INVALID' ? 'Google sign-in didn\'t go through. Please try again.' : ((err && err.message) || 'Google sign-in didn\'t go through.')); return true; }
+    return false;
+  };
+  async function signInGoogle(idToken) {
+    if (inFlight.current) return;
+    const t = tokenEmail(idToken);
+    if (DOMAIN && !t.email.endsWith('@' + DOMAIN)) { setGErr(`Use your @${DOMAIN} Google account.`); return; }
+    inFlight.current = true;
+    flushSync(() => { setBusy(true); setGErr(''); setApiErr(''); });
+    try {
+      const user = await googleLogin(idToken);
+      if (!alive.current) return;
+      enterLive(user);
+      say('Signed in. Opening the console.');
+      L.go('#home');
+    } catch (err) { failed(err, true); }
+    finally { inFlight.current = false; }
+  }
   const signIn = async (ev, pv) => {
-    flushSync(() => { setBusy(true); setApiErr(''); });
+    inFlight.current = true;
+    flushSync(() => { setBusy(true); setApiErr(''); setGErr(''); });
     try {
       const user = await apiLogin(ev, pv);
       if (!alive.current) return;
@@ -92,19 +128,15 @@ function Login({ param }) {
       say('Signed in. Opening the console.');
       L.go('#home');
     } catch (err) {
-      if (!alive.current) return;
-      flushSync(() => setBusy(false));
-      const code = err && err.code, st = err && err.status;
-      if (code === 'NOT_ADMIN') { flushSync(() => setErrs({ email: 'This Linkloom account is not an admin account.' })); email.current.focus(); return; }
-      if (code === 'RATE_LIMITED' || st === 429) { flushSync(() => setApiErr('Too many sign-in attempts. Wait a minute, then try again.')); return; }
-      if (code === 'NETWORK' || !st || st >= 500) { flushSync(() => setApiErr('Could not reach Linkloom. Check your connection, then try again in a minute.')); return; }
+      inFlight.current = false;
+      if (failed(err, false) || !alive.current) return;
       flushSync(() => setErrs({ pw: 'That email and password don\'t match.' }));
       pw.current.value = ''; pw.current.focus(); mo('shake', pw.current.parentElement);
     }
   };
   const submit = e => {
     e.preventDefault();
-    if (busy || !navigator.onLine) return;
+    if (inFlight.current || !navigator.onLine) return;
     const ev = email.current.value.trim().toLowerCase(), pv = pw.current.value;
     const bad = {};
     if (!ev) bad.email = 'Enter your work email.';
@@ -121,12 +153,17 @@ function Login({ param }) {
       <section className="focus-form light auth-form">
         <div className="auth-in" data-host="">
           <div className="auth-head"><h1 className="t-h1" tabIndex={-1} data-h="">Admin sign-in</h1>
-            <p className="muted">Use the email and password of your Linkloom admin account.</p></div>
+            <p className="muted">Use your Linkloom admin account.</p></div>
           {showFlash ? <Note kind={FLASH[param][0]} ic={FLASH[param][1]} role="status"><p>{FLASH[param][2]}</p></Note> : null}
           <Offline online={online} />
+          {googleEnabled() ? <div className="auth-stack">
+            <div className="auth-google" ref={gbtn} aria-busy={busy || undefined}></div>
+            {gErr ? <Note kind="err" ic="alert" role="status"><p>{gErr}</p></Note> : null}
+            <p className="auth-or"><span>or use your password</span></p>
+          </div> : null}
           <form className="auth-stack" noValidate data-form="" onSubmit={submit} ref={form}>
             <div className={'field' + (errs.email ? ' is-err' : '')} data-f="email"><label htmlFor="auth-email">Work email</label>
-              <input className="input" id="auth-email" type="email" autoComplete="username" spellCheck="false" autoCapitalize="off" placeholder={DOMAIN ? 'name@' + DOMAIN : 'name@example.com'} aria-describedby="auth-email-e" aria-invalid={errs.email ? 'true' : undefined} ref={email} onInput={() => clr('email')} />
+              <input className="input" id="auth-email" type="email" autoComplete="username" spellCheck="false" autoCapitalize="off" aria-describedby="auth-email-e" aria-invalid={errs.email ? 'true' : undefined} ref={email} onInput={() => clr('email')} />
               <p className="err" id="auth-email-e" aria-live="polite">{errs.email || null}</p></div>
             <div className={'field' + (errs.pw ? ' is-err' : '')} data-f="pw"><label htmlFor="auth-pw">Password</label>
               <div className="auth-pw"><input className="input" id="auth-pw" type={show ? 'text' : 'password'} autoComplete="current-password" spellCheck="false" autoCapitalize="off" maxLength={128} aria-describedby="auth-pw-e" aria-invalid={errs.pw ? 'true' : undefined} ref={pw} onInput={() => clr('pw')} />
