@@ -150,9 +150,11 @@ export async function download(path, { query, filename = 'export.csv' } = {}) {
 /* Admins sign in in two steps, on the admin endpoints (never the website's /v1/auth/login/ or Google sign-in, which
    would skip the authenticator step):
    1. adminLogin(email, password)  POST /v1/admin/auth/login/      returns { challengeId, expiresIn }
-   2. verifyMfa(challengeId, code, trustDevice)
+   2. verifyMfa(mfaToken, code)
                                    POST /v1/admin/auth/mfa/verify/ stores the tokens and returns the user
                                    ({ role: "admin", adminRole: "super_admin" | "trust_safety" | "finance", aal })
+   The live backend takes { email, password } -> { mfaRequired, mfaToken, user } and then { mfaToken, code }; it refuses
+   the guide's mfaChallengeId and trustDevice field names ("Unknown or read-only field").
    Errors are ApiError with the backend's code (INVALID_CREDENTIALS, MFA_INVALID, ACCOUNT_LOCKED, RATE_LIMITED, ...).
    NOT_ADMIN is raised here when the tokens belong to an account whose role is not "admin"; they are thrown away. */
 export async function adminLogin(email, password) {
@@ -164,8 +166,8 @@ export async function adminLogin(email, password) {
   return { challengeId, expiresIn: Number(d.expiresIn) || 0 };
 }
 
-export async function verifyMfa(challengeId, code, trustDevice = false) {
-  const { res, body } = await raw('/v1/admin/auth/mfa/verify/', { method: 'POST', body: { mfaChallengeId: challengeId, code, trustDevice: !!trustDevice } });
+export async function verifyMfa(mfaToken, code) {
+  const { res, body } = await raw('/v1/admin/auth/mfa/verify/', { method: 'POST', body: { mfaToken, code } });
   if (!res.ok || !body || body.success === false) throw fail(res, body);
   const d = body.data || {};
   if (!d.access || !d.user) throw new ApiError(res.status, 'The Linkloom API did not answer as expected.');

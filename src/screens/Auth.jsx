@@ -196,7 +196,6 @@ function CodeStep({ online, say, back, life }) {
   const [isErr, setIsErr] = useState(false);
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
-  const [remember, setRemember] = useState(LS.remember);
 
   useLayoutEffect(() => {
     LS.step = 'code';
@@ -218,7 +217,7 @@ function CodeStep({ online, say, back, life }) {
     otp.current.disable(true);
     flushSync(() => { setBusy(true); setOerr(''); setIsErr(false); });
     try {
-      const user = await verifyMfa(LS.challenge, code, LS.remember);
+      const user = await verifyMfa(LS.challenge, code);
       if (!life.alive) return;
       flushSync(() => { setBusy(false); setDone(true); });
       mo('check', go.current.querySelector('.t svg'), { color: 'butter' });
@@ -236,7 +235,12 @@ function CodeStep({ online, say, back, life }) {
       if (c === 'ACCOUNT_SUSPENDED') { restart('This admin account has been suspended. Contact a super admin.'); return; }
       if (c === 'RATE_LIMITED' || st === 429) { const w = waitOf(err); flushSync(() => setOerr(`Too many attempts. Wait ${w ? mmss(w) : 'a minute'}, then try again.`)); return; }
       if (isNet(err)) { flushSync(() => setOerr('Could not reach Linkloom. Check your connection, then try again.')); return; }
-      if (c === 'MFA_CHALLENGE_EXPIRED' || c === 'MFA_CHALLENGE_INVALID' || c === 'CHALLENGE_EXPIRED' || st === 410) { restart('That sign-in took too long. Enter your password again.'); return; }
+      if (c === 'MFA_CHALLENGE_EXPIRED' || c === 'MFA_CHALLENGE_INVALID' || c === 'CHALLENGE_EXPIRED' || st === 410 || /session|expired/i.test((err && err.message) || '')) { restart('That sign-in took too long. Enter your password again.'); return; }
+      /* anything that is not a wrong code: say what the backend said, instead of blaming the code */
+      if (c && !/^(MFA_INVALID|OTP_INVALID|INVALID_CODE|CODE_INVALID|INVALID_OTP)$/.test(c)) {
+        const d = (err && err.details) || {}, first = Object.entries(d).map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(' ') : v}`)[0];
+        flushSync(() => setOerr(`${(err && err.message) || 'Sign-in didn\'t go through.'}${first ? ' (' + first + ')' : ''}`)); return;
+      }
       if (c === 'MFA_NOT_ENROLLED') { restart('This account has no authenticator app set up yet. Ask another super admin to set it up.'); return; }
       const left = triesOf(err);
       if (left === 0) { restart('Too many wrong codes. Enter your password again.'); return; }
@@ -254,7 +258,6 @@ function CodeStep({ online, say, back, life }) {
         <OtpBoxes api={otp} isErr={isErr} onFull={f => { setOerr(''); setIsErr(false); setFull(f); }} />
         <div className="auth-totp" aria-hidden="true"><span className="auth-totp-bar"><i data-tb="" ref={tb}></i></span><span className="num" data-tt="" ref={tt}></span></div>
         <p className="err" data-oerr="" aria-live="polite">{oerr}</p>
-        <label className="check auth-remember"><input type="checkbox" data-remember="" checked={remember} onChange={e => { LS.remember = e.target.checked; setRemember(e.target.checked); }} aria-describedby="auth-rem-h" /><span><b>Trust this device for 7 days</b><span className="help" id="auth-rem-h">Off by default. Leave it off on shared or office computers.</span></span></label>
         <div className="auth-acts"><Lq type="submit" className="lq-p auth-go" data-submit="" ref_={go} disabled={!full || busy || done} aria-disabled={!full && !done ? 'true' : undefined}>{done ? <><Icon n="check" className="ic" /> Signed in</> : busy ? 'Checking…' : <>Verify and sign in <Icon n="arrow" className="ic" /></>}</Lq></div>
       </form>
       <p className="auth-legal">No access to your app? Another super admin can reset your authenticator after confirming it's you on a call.</p>
