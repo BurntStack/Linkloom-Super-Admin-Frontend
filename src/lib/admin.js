@@ -106,7 +106,22 @@ export const nameOf = o => (o == null ? '' : typeof o !== 'object' ? String(o)
   : str(pick(o.displayName, o.brandName, o.fullName, o.name, o.title, o.email, o.handle, o.id)));
 export const idOf = o => (o == null ? '' : typeof o !== 'object' ? String(o) : str(pick(o.id, o.uuid, o.userId)));
 /* the user account behind a creator or brand profile (account actions take the user id) */
-export const userIdOf = r => str(pick(r.userId, r.user && typeof r.user === 'object' ? r.user.id : r.user, r.accountId, r.account && r.account.id, r.ownerId, r.owner && r.owner.id));
+/* The profile id (creator or brand) is NOT the user id; account actions 404 with it. Look for the user id under any of
+   the usual names, at the top level or one level down (user, account, owner, profile). */
+const UID_KEYS = ['userId', 'user_id', 'userUuid', 'accountId', 'account_id', 'ownerId', 'owner_id', 'uid'];
+const UID_OBJS = ['user', 'account', 'owner', 'profile', 'creator', 'brand'];
+export const userIdOf = r => {
+  if (!r || typeof r !== 'object') return '';
+  for (const k of UID_KEYS) if (r[k] != null && r[k] !== '' && typeof r[k] !== 'object') return str(r[k]);
+  for (const o of UID_OBJS) {
+    const v = r[o];
+    if (v == null || v === '') continue;
+    if (typeof v !== 'object') { if (o === 'user' || o === 'account' || o === 'owner') return str(v); continue; }
+    for (const k of UID_KEYS) if (v[k] != null && v[k] !== '' && typeof v[k] !== 'object') return str(v[k]);
+    if ((o === 'user' || o === 'account' || o === 'owner') && v.id != null) return str(v.id);
+  }
+  return '';
+};
 
 /* money fields, by name; everything else is shown as it came */
 const MONEY = /(amount|paise|price|budget|escrow|balance|revenue|commission|gateway|gmv|payout|fee|refund|released|held|net|gets|value|total(?!count))/i;

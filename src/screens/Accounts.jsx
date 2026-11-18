@@ -20,7 +20,7 @@ const ui = () => (data.ui.accounts = data.ui.accounts || { tab: 'creator', q: ''
 
 /* ---------- reading a creator or brand record ---------- */
 export const acct = r => ({
-  id: str(r.id), userId: userIdOf(r) || str(r.id),
+  id: str(r.id), userId: userIdOf(r) || str(r.id), uidKnown: !!userIdOf(r),
   name: str(pick(r.displayName, r.brandName, r.fullName, r.name, r.user && nameOf(r.user), 'Unnamed')),
   handle: str(pick(r.handle, r.instagram && '@' + r.instagram, r.youtube && '@' + r.youtube, r.username)),
   email: str(pick(r.email, r.user && r.user.email)), city: str(pick(r.city, r.location)),
@@ -106,21 +106,23 @@ function Sessions({ userId }) {
 }
 const pickCols = (rows, pref) => { const have = new Set(rows.flatMap(r => Object.keys(r || {}))); const c = pref.filter(k => have.has(k)); return c.length ? c : undefined; };
 
+/* a 404 on an account action means the backend has no user with that id: say which id, not "removed" */
+const onUser = (a, p) => p.catch(e => { if (e && e.status === 404) { e.status = 0; e.code = "USER_NOT_FOUND"; e.message = `The backend has no user account with id ${a.userId}${a.uidKnown ? "" : " (the API did not send this profile's user id, so its profile id was tried)"}.`; } throw e; });
 function Enforce({ a, reload }) {
   const sus = suspended(a);
   const suspend = () => decide({
     title: `Suspend ${a.name}?`, confirm: 'Suspend account', tone: 'danger', toast: 'Account suspended',
     intro: 'Their tokens stop working at once and they cannot sign in until reactivated.',
-    fields: [reason(4), note()], run: b => api.suspend(a.userId, b), done: reload
+    fields: [reason(4), note()], run: b => onUser(a, api.suspend(a.userId, b)), done: reload
   });
   const reactivate = () => decide({
     title: `Reactivate ${a.name}?`, confirm: 'Reactivate', toast: 'Account reactivated',
-    fields: [reason(4)], run: b => api.reactivate(a.userId, b), done: reload
+    fields: [reason(4)], run: b => onUser(a, api.reactivate(a.userId, b)), done: reload
   });
   const reset = () => decide({
     title: 'Send a password reset?', confirm: 'Send reset', toast: 'Password reset sent',
     intro: 'This creates a secure reset challenge that lasts 30 minutes. Their current password keeps working until they use it.',
-    run: () => api.passwordReset(a.userId)
+    run: () => onUser(a, api.passwordReset(a.userId))
   });
   return (
     <section className="card adm-card" aria-labelledby="accAct"><h2 className="t-h3" id="accAct">Account</h2>
