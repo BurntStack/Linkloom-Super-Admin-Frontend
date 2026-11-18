@@ -1,19 +1,16 @@
-/* Live data from the existing Linkloom API, for the parts of the console that have an endpoint today:
-   - public: creators (GET /v1/creators/, GET /v1/creators/{id}/) and open campaigns (GET /v1/campaigns/);
-   - signed in as an admin: the verification queue (GET /v1/admin/verifications/, GET /v1/admin/verifications/{id}/)
-     and a creator's reviews (GET /v1/creators/{id}/reviews/).
-   It is read only. Deciding anything (approve, suspend, hide, release) needs admin action endpoints the backend
-   does not expose yet, so the rest of the console still runs on sample data.
-   Turn it off with VITE_LIVE_API=off. */
+/* Everything the console shows comes from the Linkloom API, loaded here:
+   - creators (GET /v1/creators/, GET /v1/creators/{id}/) and open campaigns (GET /v1/campaigns/);
+   - the verification queue (GET /v1/admin/verifications/, GET /v1/admin/verifications/{id}/);
+   - a creator's reviews (GET /v1/creators/{id}/reviews/).
+   It is read only: the backend does not expose admin action endpoints (approve, suspend, hide, release) yet. */
 import { data, store } from './core.js';
-import { get, list, paise, signedInLive } from './api.js';
+import { get, list, request, paise, signedInLive } from './api.js';
 
-export const LIVE = import.meta.env.VITE_LIVE_API !== 'off';
 const TIMEOUT = 45000;                                   // the server sleeps when idle and can take a while to wake
 
-const state = data.live = { status: 'idle', creators: [], campaigns: [], error: '', vstatus: 'idle', verifications: [], verror: '' };
-/* the console is signed in to the real API (not the sample account) */
-export const isLiveSession = () => LIVE && !!data.session.live && signedInLive();
+const state = data.live = { status: 'idle', creators: [], campaigns: [], error: '', vstatus: 'idle', verifications: [], verror: '', unread: 0 };
+/* the console is signed in as an admin */
+export const isLiveSession = () => !!data.session.live && signedInLive();
 export const live = () => state;
 
 const num = v => (typeof v === 'number' && Number.isFinite(v) ? v : null);
@@ -54,8 +51,8 @@ async function load() {
 }
 
 /* Start loading once; screens call this when they mount and re-render on the store's 'live' event. */
-export function ensureLive() { if (LIVE && state.status === 'idle') { state.status = 'loading'; load(); } }
-export function retryLive() { if (LIVE && state.status !== 'loading') { store.set(() => { state.status = 'loading'; }, 'live'); load(); } }
+export function ensureLive() { if (state.status === 'idle') { state.status = 'loading'; load(); } }
+export function retryLive() { if (state.status !== 'loading') { store.set(() => { state.status = 'loading'; }, 'live'); load(); } }
 
 /* One creator's public profile, with packages. */
 export async function fetchCreator(id) {
@@ -118,14 +115,14 @@ async function loadVerifications() {
     store.set(() => { state.vstatus = 'failed'; state.verror = (e && e.message) || 'Could not load the verification queue.'; }, 'live');
   } finally { t.done(); }
 }
-export function ensureVerifications() { if (isLiveSession() && state.vstatus === 'idle') { state.vstatus = 'loading'; loadVerifications(); } }
+export function ensureVerifications() { if (isLiveSession() && state.vstatus === 'idle') { state.vstatus = 'loading'; loadVerifications(); refreshUnread(); } }
 export function reloadVerifications() { if (isLiveSession() && state.vstatus !== 'loading') { store.set(() => { state.vstatus = 'loading'; }, 'live'); loadVerifications(); } }
 export async function fetchVerification(id) {
   const t = timed();
   try { return mapVerification(await get(`/v1/admin/verifications/${encodeURIComponent(id)}/`, { signal: t.signal })); }
   finally { t.done(); }
 }
-/* "5 min ago" against the real clock (the sample data runs on a fixed date, live records do not) */
+/* "5 min ago" against the real clock */
 export function sinceNow(s) {
   const t = Date.parse(s); if (!Number.isFinite(t)) return '';
   const m = Math.max(0, Math.round((Date.now() - t) / 6e4));
@@ -138,5 +135,20 @@ export async function documentUrl(uploadId) {
   const d = await get(`/v1/uploads/${encodeURIComponent(uploadId)}/download-url/`);
   return d && (d.url || d.downloadUrl);
 }
+/* ---------- the admin's own notifications (the website's /v1/notifications/) ---------- */
+export async function refreshUnread() {
+  try { const d = await get('/v1/notifications/unread-count/'); const n = Number(d && (d.unreadCount ?? d.count ?? d)); store.set(() => { state.unread = Number.isFinite(n) ? n : 0; }, 'live'); }
+  catch (e) {}
+}
+export async function fetchNotifications() {
+  const rows = await list('/v1/notifications/', { max: 100 });
+  return rows.map(n => ({ id: String(n.id || ''), text: String(n.title || n.text || n.body || n.message || n.type || 'Notification'),
+    at: n.createdAt || '', read: !!(n.read ?? n.isRead ?? n.readAt), link: n.link || n.url || '' }));
+}
+export async function readAllNotifications() {
+  await request('/v1/notifications/read-all/', { method: 'POST' });
+  store.set(() => { state.unread = 0; }, 'live');
+}
+
 /* forget everything loaded for a signed-in admin (on sign-out) */
-export function forgetSession() { state.vstatus = 'idle'; state.verifications = []; state.verror = ''; }
+export function forgetSession() { state.vstatus = 'idle'; state.verifications = []; state.verror = ''; state.unread = 0; }

@@ -67,11 +67,12 @@ export async function request(path, o = {}) {
     if (await refresh()) ({ res, body } = await raw(path, { ...o, token: readAuth().access }));
     else { writeAuth(null); onExpired && onExpired(); }
   }
+  if (res.status === 204) return { data: null, meta: null };
   if (!res.ok || !body || body.success === false) throw fail(res, body);
   return { data: body.data, meta: body.meta || null };
 }
 
-export const get = async (path, o) => (await request(path, o)).data;
+export const get =async (path, o) => (await request(path, o)).data;
 
 /* Every page of a list, up to max items. */
 export async function list(path, { query, signal, max = 500, auth: useAuth } = {}) {

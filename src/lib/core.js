@@ -2,7 +2,7 @@
    Screens live in src/screens/<Name>.jsx and are registered in src/screens/index.js. Money is always integer paise.
    React reads this module through the hooks in src/lib/hooks.js; the motion layer (src/lib/motion.js) works on the DOM. */
 import { flushSync } from 'react-dom';
-import data from '../data/sample.js';
+import data from '../data/state.js';
 
 const LLD_DATA = data;
 const LLD = {};
@@ -17,17 +17,12 @@ const inr = (paise, o = {}) => {                       // 1250000 -> "₹12,500"
   const s = '₹' + r.toLocaleString('en-IN') + (o.dec ? '.' + d : '');
   return (neg || o.sign) ? '−' + s : s;
 };
-const rupees = n => Math.round(n * 100);               // rupees -> paise (inputs only)
 const compact = n => n >= 1e5 ? (n / 1e5).toFixed(n % 1e5 ? 1 : 0).replace(/\.0$/, '') + 'L' : n >= 1e3 ? Math.round(n / 1e3) + 'K' : String(n);
-/* Linkloom runs on subscriptions: no per-deal platform fee. The brand pays the agreed price into escrow and the creator receives it on approval; taxes are 'as per confirmed rules'. */
-const FEE_EXAMPLE = 0;
-const payout = paise => ({ price: paise, fee: 0, net: paise });
 const D = s => new Date(s + (s.length === 10 ? 'T12:00:00+05:30' : ''));
 const fmtDate = (s, o = {}) => D(s).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', ...(o.year ? { year: 'numeric' } : {}), timeZone: 'Asia/Kolkata' });
 const istDay = d => Math.floor((d.getTime() + 19800000) / 864e5);          // calendar day in IST
-const daysLeft = s => istDay(D(s)) - istDay(LLD.today());
-const ago = s => { const m = Math.round((LLD.today() - D(s)) / 6e4); if (m < 60) return m + ' min ago'; const h = Math.round(m / 60); if (h < 24) return h + ' h ago'; const d = Math.round(h / 24); return d === 1 ? 'yesterday' : d + ' days ago'; };
-const ageFrom = dob => { const t = LLD.today(), b = D(dob); let a = t.getFullYear() - b.getFullYear(); const m = t.getMonth() - b.getMonth(); if (m < 0 || (m === 0 && t.getDate() < b.getDate())) a--; return a; };
+const daysLeft = s => istDay(D(s)) - istDay(new Date());
+const ago = s => { const t = D(s).getTime(); if (!Number.isFinite(t)) return ''; const m = Math.max(0, Math.round((Date.now() - t) / 6e4)); if (m < 60) return m + ' min ago'; const h = Math.round(m / 60); if (h < 24) return h + ' h ago'; const d = Math.round(h / 24); return d === 1 ? 'yesterday' : d + ' days ago'; };
 
 /* ---------- store: one in-memory state object, change events ---------- */
 const subs = new Set();
@@ -59,37 +54,14 @@ function route() {
 const router = { get current() { return current; }, on(f) { routeSubs.add(f); return () => routeSubs.delete(f); } };
 addEventListener('hashchange', route);
 
-/* ---------- chrome numbers (badges, escrow slip): read by the shell components ---------- */
+/* ---------- chrome numbers (side menu badges): read by the shell components ----------
+   Only what the API can answer: pending verifications once the queue has loaded, and the admin's unread notifications. */
 const chrome = () => {
-  const s = LLD_DATA;
-  return {
-    verify: s.session.live && s.live && s.live.vstatus === 'ready' ? s.live.verifications.filter(v => v.status === 'pending').length : s.verifications.filter(v => v.status === 'pending').length,
-    moderation: s.reports.filter(r => r.status === 'open').length,
-    orders: s.disputes.filter(d => d.status === 'open').length,
-    bell: s.notifications.filter(n => !n.read).length,
-    held: escrowHeld(), live: liveOrders().length, audit: s.audit.length
-  };
+  const lv = LLD_DATA.live;
+  return { verify: lv && lv.vstatus === 'ready' ? lv.verifications.filter(v => v.status === 'pending').length : 0, bell: (lv && lv.unread) || 0 };
 };
-/* platform-wide escrow: money paid in on orders not yet released or refunded */
-const LIVE = ['funded', 'in_progress', 'submitted', 'revision', 'approved', 'disputed'];
-const liveOrders = () => LLD_DATA.orders.filter(o => LIVE.includes(o.phase));
-const escrowHeld = () => liveOrders().reduce((n, o) => n + o.amount, 0);
-const creator = id => LLD_DATA.creators.find(c => c.id === id);
-const brand = id => LLD_DATA.brands.find(b => b.id === id);
 
-/* ---------- audit log: append-only and hash-chained. Entries are frozen; each carries the hash of the one before,
-   so any edit or deletion breaks the chain (LLD.verifyAudit). Every admin action calls LLD.audit(). ---------- */
-const fnv = str => { let h = 0x811c9dc5; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; } return ('0000000' + h.toString(16)).slice(-8); };
-const seal = (e, prev) => Object.freeze({ ...e, prev, hash: fnv(prev + '|' + e.at + '|' + e.who + '|' + e.action + '|' + e.target + '|' + (e.detail || '')) });
-const sealAll = () => { let prev = '00000000'; LLD_DATA.audit = LLD_DATA.audit.map(e => { const x = seal(e, prev); prev = x.hash; return x; }); Object.freeze(LLD_DATA.audit); };
-const audit = (action, target, detail = '') => {
-  const log = LLD_DATA.audit, prev = log.length ? log[log.length - 1].hash : '00000000';
-  const e = seal({ id: 'al' + (log.length + 1), at: new Date(LLD.today().getTime() + log.length * 1000).toISOString(), who: LLD_DATA.me.name, action, target, detail }, prev);
-  store.set(s => { s.audit = Object.freeze([...s.audit, e]); }, 'audit');
-  return e;
-};
-const verifyAudit = () => { let prev = '00000000'; for (const e of LLD_DATA.audit) { const x = seal({ ...e, prev: undefined, hash: undefined }, prev); if (e.prev !== prev || x.hash !== e.hash) return { ok: false, at: e.id }; prev = e.hash; } return { ok: true, count: LLD_DATA.audit.length }; };
-/* one letter, like the creator app: two-letter "AI" (Ananya Iyer) reads as an AI button */
+/* one letter, like the creator app: a two-letter avatar such as "AI" reads as an AI button */
 const initials = n => (String(n || '').trim()[0] || '?').toUpperCase();
 
 /* ---------- overlays ---------- */
@@ -178,14 +150,12 @@ function icon(n, cls = '') {
 /* ---------- motion API (implemented in motion.js; safe no-ops until then) ---------- */
 const motion = { enter() {}, stagger() {}, count(el, to, fmt) { if (el) el.textContent = fmt ? fmt(to) : to; }, press() {}, swipe() { return () => {}; }, reveal() {}, celebrate() {}, flip(fn) { fn && fn(); } };
 
-Object.assign(LLD, { RM, $, $$, esc, inr, rupees, compact, payout, FEE_EXAMPLE, fmtDate, daysLeft, ago, ageFrom, D, store, register, go, route, views, router, chrome, sheets,
-  current: () => current, escrowHeld, liveOrders, creator, brand, audit, verifyAudit, openSheet, closeSheet, toast, icon, iconPath: n => P[n] || P.info, initials, motion,
-  today: () => new Date('2026-11-04T10:42:00+05:30') });
+Object.assign(LLD, { RM, $, $$, esc, inr, compact, fmtDate, daysLeft, ago, D, store, register, go, route, views, router, chrome, sheets,
+  current: () => current, openSheet, closeSheet, toast, icon, iconPath: n => P[n] || P.info, initials, motion });
 
 LLD.boot = () => {
   if (booted) return;
   booted = true;
-  sealAll();
   document.addEventListener('click', e => { const a = e.target.closest('[data-go]'); if (a) { e.preventDefault(); go(a.dataset.go); } });
   route();
 };
