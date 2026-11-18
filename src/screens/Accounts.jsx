@@ -119,8 +119,15 @@ const pickCols = (rows, pref) => { const have = new Set(rows.flatMap(r => Object
 
 /* a 404 on an account action means the backend has no user with that id: say which id, not "removed" */
 const onUser = (a, p) => p.catch(e => { if (e && e.status === 404) { e.status = 0; e.code = "USER_NOT_FOUND"; e.message = `The backend has no user account with id ${a.userId}${a.uidKnown ? "" : " (the API did not send this profile's user id, so its profile id was tried)"}.`; } throw e; });
-function Enforce({ a, reload }) {
-  const sus = suspended(a);
+function Enforce({ a, reload, kind }) {
+  /* the detail record may not say it is suspended: ask the list, filtered to suspended accounts, whether this one is in it */
+  const chk = useLoad(() => {
+    const list = kind === "brand" ? api.brands : api.creators;
+    const has = st => list({ status: st, q: a.name }).then(p => p.rows.some(r => str(r.id) === a.id || (a.userId && userIdOf(r) === a.userId)));
+    /* trust it only when the filter clearly works: in the suspended list and not in the active one */
+    return Promise.all([has("suspended"), has("active")]).then(([s, act]) => (s && !act ? true : !s && act ? false : null)).catch(() => null);
+  }, [a.id, a.userId, kind]);
+  const sus = a.userId in justSet ? justSet[a.userId] : (suspended(a) || chk.data === true);
   const suspend = () => decide({
     title: `Suspend ${a.name}?`, confirm: 'Suspend account', tone: 'danger', toast: 'Account suspended',
     intro: 'Their tokens stop working at once and they cannot sign in until reactivated.',
@@ -198,7 +205,7 @@ function Detail({ kind, id }) {
           <Lists obj={d} />
         </div>
         <div className="adm-col">
-          <Enforce a={a} reload={reload} />
+          <Enforce a={a} reload={reload} kind={kind} />
           {kind === 'creator' ? <Curate id={id} a={a} reload={reload} /> : null}
           {a.userId ? <Sessions userId={a.userId} /> : null}
           {kind === 'creator' ? <Lq as="a" className="lq-s lq-sm" href={`#marketplace-featured`}>Featured order</Lq> : null}
