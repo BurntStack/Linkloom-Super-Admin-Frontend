@@ -88,8 +88,21 @@ async function call(path, o = {}) {
   if (r.res.status === 403 && useAuth && r.body && r.body.error && r.body.error.code === 'ACCOUNT_SUSPENDED') ended('suspended');
   return r;
 }
+/* The backend refuses fields it does not know (400 VALIDATION_ERROR, "Unknown or read-only field"). The guide is not
+   always exact about bodies, so drop just those fields and try once more. */
+const unknownFields = body => {
+  const d = body && body.error && body.error.code === 'VALIDATION_ERROR' && body.error.details;
+  if (!d || typeof d !== 'object') return null;
+  const keys = Object.keys(d).filter(k => [].concat(d[k]).some(m => /unknown or read-only field/i.test(String(m))));
+  return keys.length && keys.length === Object.keys(d).length ? keys : null;
+};
 export async function request(path, o = {}) {
-  const { res, body } = await call(path, o);
+  let { res, body } = await call(path, o);
+  const drop = res.status === 400 && o.body && typeof o.body === 'object' && unknownFields(body);
+  if (drop) {
+    const trimmed = Object.fromEntries(Object.entries(o.body).filter(([k]) => !drop.includes(k)));
+    ({ res, body } = await call(path, { ...o, body: trimmed }));
+  }
   if (res.status === 204) return { data: null, meta: null };
   if (!res.ok || !body || body.success === false) throw fail(res, body);
   return { data: body.data, meta: body.meta || null };

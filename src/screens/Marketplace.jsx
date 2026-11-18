@@ -199,7 +199,7 @@ function TabCategories() {
   const merge = c => () => decide({
     title: `Merge ${cname(c)} into…`, confirm: 'Merge', tone: 'danger', toast: 'Categories merged', intro: 'Every creator in this category moves to the one you pick; this one goes away.',
     fields: [{ k: 'targetId', label: 'Merge into', type: 'select', required: true, options: [['', 'Pick a category'], ...p.rows.filter(x => x.id !== c.id).map(x => [str(x.id), cname(x)])] }],
-    run: b => api.mergeCategory(c.id, { targetId: b.targetId, intoId: b.targetId }), done: () => p.reload()
+    run: b => api.mergeCategory(c.id, b.targetId), done: () => p.reload()
   });
   return (
     <div className="stack">

@@ -23,7 +23,8 @@ export const api = {
   categories: (q, cursor) => page(`${A}/users/categories/`, { query: q, cursor, limit: 100 }),
   addCategory: body => post(`${A}/users/categories/`, body),
   updateCategory: (id, body) => patch(`${A}/users/categories/${e(id)}/`, body),
-  mergeCategory: (id, body) => post(`${A}/users/categories/${e(id)}/merge/`, body),
+  /* the merge target's field name is not in the guide: try the likely names, unknown ones are dropped (see api.js) */
+  mergeCategory: (id, targetId) => post(`${A}/users/categories/${e(id)}/merge/`, { targetId, intoId: targetId, targetCategoryId: targetId, into: targetId }),
   featured: () => page(`${A}/users/featured-creators/`, { limit: 100 }),
   orderFeatured: creatorIds => put(`${A}/users/featured-creators/order/`, { creatorIds }),
 
