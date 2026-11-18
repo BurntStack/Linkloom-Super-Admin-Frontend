@@ -20,7 +20,7 @@ const ui = () => (data.ui.accounts = data.ui.accounts || { tab: 'creator', q: ''
 
 /* ---------- reading a creator or brand record ---------- */
 export const acct = r => ({
-  id: str(r.id), userId: userIdOf(r) || str(r.id), uidKnown: !!userIdOf(r),
+  id: str(r.id), userId: userIdOf(r), uidKnown: !!userIdOf(r),
   name: str(pick(r.displayName, r.brandName, r.fullName, r.name, r.user && nameOf(r.user), 'Unnamed')),
   handle: str(pick(r.handle, r.instagram && '@' + r.instagram, r.youtube && '@' + r.youtube, r.username)),
   email: str(pick(r.email, r.user && r.user.email)), city: str(pick(r.city, r.location)),
@@ -127,10 +127,10 @@ function Enforce({ a, reload }) {
   return (
     <section className="card adm-card" aria-labelledby="accAct"><h2 className="t-h3" id="accAct">Account</h2>
       <RoleNote area="accounts" doing="Changing accounts" />
-      <dl className="adm-kv"><div><dt>Status</dt><dd>{a.status ? <Status s={a.status} /> : 'Active'}</dd></div><div><dt>User id</dt><dd className="num">{a.userId}</dd></div>{a.email ? <div><dt>Email</dt><dd>{a.email}</dd></div> : null}</dl>
+      <dl className="adm-kv"><div><dt>Status</dt><dd>{a.status ? <Status s={a.status} /> : 'Active'}</dd></div><div><dt>User id</dt><dd className="num">{a.userId || <span className="err">Not sent by the API: the backend must include userId in this record, so account actions are off</span>}</dd></div>{a.email ? <div><dt>Email</dt><dd>{a.email}</dd></div> : null}</dl>
       <div className="adm-acts">
-        {sus ? <ActBtn area="accounts" ic="check" tone="p" onClick={reactivate}>Reactivate</ActBtn> : <ActBtn area="accounts" ic="lock" onClick={suspend}>Suspend</ActBtn>}
-        <ActBtn area="accounts" ic="send" onClick={reset}>Password reset</ActBtn>
+        {sus ? <ActBtn area="accounts" ic="check" tone="p" disabled={!a.userId} onClick={reactivate}>Reactivate</ActBtn> : <ActBtn area="accounts" ic="lock" disabled={!a.userId} onClick={suspend}>Suspend</ActBtn>}
+        <ActBtn area="accounts" ic="send" disabled={!a.userId} onClick={reset}>Password reset</ActBtn>
       </div>
     </section>
   );
@@ -189,7 +189,7 @@ function Detail({ kind, id }) {
         <div className="adm-col">
           <Enforce a={a} reload={reload} />
           {kind === 'creator' ? <Curate id={id} a={a} reload={reload} /> : null}
-          <Sessions userId={a.userId} />
+          {a.userId ? <Sessions userId={a.userId} /> : null}
           {kind === 'creator' ? <Lq as="a" className="lq-s lq-sm" href={`#marketplace-featured`}>Featured order</Lq> : null}
         </div>
       </div>
