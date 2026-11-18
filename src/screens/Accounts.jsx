@@ -29,9 +29,20 @@ export const acct = r => ({
   verified: !!(r.verified ?? r.isVerified), featured: !!(r.featured ?? r.isFeatured),
   badges: arr(r.badges).map(nameOf), tags: arr(pick(r.tags, r.categories)).map(nameOf),
   reports: num(pick(r.reportCount, r.abuseReportCount, r.openReports, r.reports && typeof r.reports === 'object' && !Array.isArray(r.reports) ? r.reports.open : null, Array.isArray(r.abuseReports) ? r.abuseReports.length : null)),
-  spike: !!(r.postingSpike ?? r.hasPostingSpike)
+  spike: !!(r.postingSpike ?? r.hasPostingSpike),
+  susp: isSuspended(r)
 });
-const suspended = a => /suspend|banned|disabled/.test(a.status);
+/* suspension can show up in many places: a status word, a flag, a timestamp, or an inactive user account */
+const SUSP = /suspend|banned|disabled|blocked|deactivated/;
+function isSuspended(r) {
+  if (!r || typeof r !== 'object') return false;
+  const objs = [r, r.user, r.account, r.profile].filter(o => o && typeof o === 'object');
+  return objs.some(o => SUSP.test(String(o.status || '').toLowerCase()) || SUSP.test(String(o.accountStatus || '').toLowerCase())
+    || o.isSuspended === true || o.suspended === true || !!o.suspendedAt || o.isActive === false || o.is_active === false);
+}
+/* what this tab just did wins over a record that does not say (user id -> true / false) */
+const justSet = {};
+const suspended = a => (a.userId in justSet ? justSet[a.userId] : (a.susp || SUSP.test(a.status)));
 
 /* ---------- list ---------- */
 function List() {
@@ -113,11 +124,11 @@ function Enforce({ a, reload }) {
   const suspend = () => decide({
     title: `Suspend ${a.name}?`, confirm: 'Suspend account', tone: 'danger', toast: 'Account suspended',
     intro: 'Their tokens stop working at once and they cannot sign in until reactivated.',
-    fields: [reason(4), note()], run: b => onUser(a, api.suspend(a.userId, b)), done: reload
+    fields: [reason(4), note()], run: b => onUser(a, api.suspend(a.userId, b)), done: () => { justSet[a.userId] = true; reload(); }
   });
   const reactivate = () => decide({
     title: `Reactivate ${a.name}?`, confirm: 'Reactivate', toast: 'Account reactivated',
-    fields: [reason(4)], run: b => onUser(a, api.reactivate(a.userId, b)), done: reload
+    fields: [reason(4)], run: b => onUser(a, api.reactivate(a.userId, b)), done: () => { justSet[a.userId] = false; reload(); }
   });
   const reset = () => decide({
     title: 'Send a password reset?', confirm: 'Send reset', toast: 'Password reset sent',
@@ -127,7 +138,7 @@ function Enforce({ a, reload }) {
   return (
     <section className="card adm-card" aria-labelledby="accAct"><h2 className="t-h3" id="accAct">Account</h2>
       <RoleNote area="accounts" doing="Changing accounts" />
-      <dl className="adm-kv"><div><dt>Status</dt><dd>{a.status ? <Status s={a.status} /> : 'Active'}</dd></div><div><dt>User id</dt><dd className="num">{a.userId || <span className="err">Not sent by the API: the backend must include userId in this record, so account actions are off</span>}</dd></div>{a.email ? <div><dt>Email</dt><dd>{a.email}</dd></div> : null}</dl>
+      <dl className="adm-kv"><div><dt>Status</dt><dd>{sus ? <Status s="suspended" /> : a.status ? <Status s={a.status} /> : 'Active'}</dd></div><div><dt>User id</dt><dd className="num">{a.userId || <span className="err">Not sent by the API: the backend must include userId in this record, so account actions are off</span>}</dd></div>{a.email ? <div><dt>Email</dt><dd>{a.email}</dd></div> : null}</dl>
       <div className="adm-acts">
         {sus ? <ActBtn area="accounts" ic="check" tone="p" disabled={!a.userId} onClick={reactivate}>Reactivate</ActBtn> : <ActBtn area="accounts" ic="lock" disabled={!a.userId} onClick={suspend}>Suspend</ActBtn>}
         <ActBtn area="accounts" ic="send" disabled={!a.userId} onClick={reset}>Password reset</ActBtn>
