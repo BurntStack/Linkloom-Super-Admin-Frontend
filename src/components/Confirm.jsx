@@ -40,7 +40,7 @@ function Sheet({ o, close }) {
     try {
       const r = await o.run({ reason, note: n, x, text: reason && reason !== 'Other' ? reason + (n ? ': ' + n : '') : n });
       close();
-      L.toast(o.toast || 'Logged to audit', 'check');
+      L.toast((typeof o.toast === 'function' ? o.toast(r) : o.toast) || 'Logged to audit', 'check');
       o.done && o.done(r, { reason, note: n, x });
     } catch (er) { flushSync(() => { setBusy(false); setErr(errText(er)); }); mo('shake', errEl.current); }
   };

@@ -155,7 +155,7 @@ function Security({ kind, a, after }) {
     reasonLabel: 'How you confirmed it is them',
     reasons: kind === 'brand' ? ['Mail from the registered address', 'Called the registered number', 'Matched last invoice amount'] : ['OTP to the registered mobile', 'Matched last payout amount', 'Video call with ID'],
     placeholder: 'Support ticket number or a short note',
-    run: o => onUser(a, api.passwordReset(a.userId, { reason: why(o), note: o.note })), toast: 'Reset link sent · Logged to audit', done: done(null)
+    run: o => onUser(a, api.passwordReset(a.userId, { reason: why(o), note: o.note })), toast: r => { const t = r && (r.sentTo || r.sent_to), x = r && Date.parse(r.expiresAt || r.expires_at); return `Reset link sent${t ? ` to ${t}` : ''}${Number.isFinite(x) ? ` · expires ${new Date(x).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' })}` : ''} · Logged to audit`; }, done: done(null)
   });
   const signOut = one => confirm({
     title: one ? `Sign out ${one.device}` : 'Sign out of every device', cta: 'Sign out', danger: true,
