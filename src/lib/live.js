@@ -48,7 +48,10 @@ export const escrowOf = d => {
   const k = Object.keys(f).find(x => /escrow/i.test(x) && /(total|held|balance|amount|paise)/i.test(x) && !/count/i.test(x)) || Object.keys(f).find(x => /escrow/i.test(x) && !/count/i.test(x));
   return k != null ? f[k] : null;
 };
-export const setEscrow = d => { const v = escrowOf(d); if (v != null) store.set(() => { state.escrow = v; }, 'live'); };
+export const setEscrow = d => {
+  const v = escrowOf(d), lv = countOf(d || {}, /liveOrders|orders?\.(live|inProgress|active)/i, /liveOrder/i);
+  store.set(() => { if (v != null) state.escrow = v; if (lv) state.liveOrders = lv; }, 'live');
+};
 export function startLive() {
   if (!isLiveSession() || timer) return;
   refreshCounts();

@@ -1,54 +1,100 @@
-/* Command (#home): the admin dashboard.
-   - GET /v1/admin/system/dashboard/  platform health, escrow totals, pending queues, audit chain status
-   - GET /v1/admin/system/counts/     queue counts (the same numbers as the side-menu badges)
-   The dashboard's exact field names are not in the guide, so every group it returns is shown as it came, with
-   money fields (integer paise) formatted as rupees. Creators coral, brands violet. */
-import { useEffect, useRef } from 'react';
-import L, { store } from '../lib/core.js';
+/* Command (#home): the admin dashboard, as designed (artifact screens/home.js).
+   - the ink band: active creators vs brands, live orders by phase, escrow balance, commission line
+       GET /v1/admin/system/dashboard/  (fallback for phases and escrow: GET /v1/admin/finance/orders/pipeline/)
+   - urgent actions: verification queue, open reports, the dispute due soonest
+       GET /v1/admin/verifications/?status=pending · /moderation/abuse-reports/?status=open · /finance/disputes/?status=open
+   - alerts: suspicious bidding, payment complaints, disputes due within 2 days   GET /v1/admin/moderation/bid-alerts/?status=open
+   - recent activity: GET /v1/admin/system/audit-log/?limit=5, chain state from /audit-log/verify/
+   Each part loads on its own; a part the admin's role cannot read is left out. Creators coral, brands violet, escrow plum. */
+import { useEffect, useLayoutEffect, useRef } from 'react';
+import L, { store, data } from '../lib/core.js';
+import { mo } from '../lib/mo.js';
 import { useRerender } from '../lib/hooks.js';
-import { api, label, isMoneyKey, can } from '../lib/admin.js';
-import { live, countOf, refreshCounts, setEscrow } from '../lib/live.js';
+import { api, can, pick, num, arr } from '../lib/admin.js';
+import { refreshCounts, setEscrow } from '../lib/live.js';
+import { toDashboard, toVerification, vFlags, toReport, toDispute, toBidAlert, toAudit, auditLabel, LIVE_PHASES, phaseOf } from '../lib/model.js';
 import Icon from '../components/Icon.jsx';
 import Lq from '../components/Lq.jsx';
-import { useLoad, useStagger, Fields, Failed, inr, fmt } from '../components/Admin.jsx';
+import Count from '../components/Count.jsx';
+import { useLoad } from '../components/Admin.jsx';
 
+const WORDS = ['Nothing', 'One thing', 'Two things', 'Three things', 'Four things', 'Five things', 'Six things', 'Seven things', 'Eight things'];
 const first = n => String(n || '').trim().split(/\s+/)[0] || '';
 const plural = (n, a, b) => `${n} ${n === 1 ? a : (b || a + 's')}`;
+const hoursSince = at => { const t = Date.parse(at); return Number.isFinite(t) ? (Date.now() - t) / 36e5 : 0; };
+const dueTxt = d => (d == null || !Number.isFinite(d) ? 'No due date' : d < 0 ? `${-d} ${d === -1 ? 'day' : 'days'} overdue` : d === 0 ? 'Due today' : d === 1 ? 'Due tomorrow' : `Due in ${d} days`);
+const daysTo = s => (s ? L.daysLeft(String(s).length > 10 ? String(s).slice(0, 10) : s) : null);
+const ageFrom = dob => { const t = new Date(), b = new Date(dob); if (!Number.isFinite(b.getTime())) return ''; let a = t.getFullYear() - b.getFullYear(); const m = t.getMonth() - b.getMonth(); if (m < 0 || (m === 0 && t.getDate() < b.getDate())) a--; return a; };
+const HAv = ({ name, kind, cls = '' }) => <span className={`home-av is-${kind} ${cls}`} aria-hidden="true">{(String(name || '?').trim()[0] || '?').toUpperCase()}</span>;
+const PHASE = { funded: 'Funded', in_progress: 'In progress', submitted: 'To approve', revision: 'In revision', approved: 'Approved, releasing', disputed: 'In dispute' };
+const GROUPS = [['all', 'All'], ['bids', 'Suspicious bids'], ['pay', 'Payments'], ['disp', 'Disputes']];
+const ui = () => (data.ui.home = data.ui.home || { afilter: 'all' });
+const rows = p => p.then(r => r.rows, () => null);
+const ok = p => p.then(x => x, () => null);
 
 function greeting(now) {
   let h = 12; try { h = Number(new Intl.DateTimeFormat('en-GB', { hour: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' }).format(now)) % 24; } catch (e) {}
   return h < 4 ? 'Up late' : h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : h < 23 ? 'Good evening' : 'Up late';
 }
 
-/* the queues an admin works, and where each one lives */
-const QUEUES = [
-  ['verify', 'Verifications waiting', [/verification/i, /kyc/i], '#verify', 'verified', 'verify'],
-  ['campaigns', 'Campaigns to review', [/campaign/i], '#marketplace-campaigns', 'brief', 'campaigns'],
-  ['reports', 'Abuse reports', [/abuse|report/i], '#moderation', 'flag', 'moderation'],
-  ['bids', 'Bid alerts', [/bid.?alert/i], '#marketplace-bids', 'bids', 'moderation'],
-  ['reviews', 'Flagged reviews', [/review/i], '#marketplace-reviews', 'star', 'moderation'],
-  ['disputes', 'Open disputes', [/dispute/i], '#orders-disputes', 'alert', 'finance']
-];
+/* everything the screen reads, in one go; parts the role cannot see come back null */
+async function loadAll() {
+  const [dash, pipe, ver, rep, dis, bids, aud, chain, rules] = await Promise.all([
+    ok(api.dashboard()), can('finance') ? ok(api.pipeline()) : null,
+    can('verify') ? rows(api.verifications({ status: 'pending' })) : null,
+    can('moderation') ? rows(api.reports({ status: 'open' })) : null,
+    can('finance') ? rows(api.disputes({ status: 'open' })) : null,
+    can('moderation') ? rows(api.bidAlerts({ status: 'open' })) : null,
+    can('audit') ? ok(api.auditLog({})) : null,
+    can('audit') ? ok(api.verifyAudit()) : null,
+    can('finance') ? ok(api.rules()) : null
+  ]);
+  if (dash) setEscrow(dash);
+  const d = toDashboard(dash);
+  /* phases and escrow from the pipeline when the dashboard does not carry them */
+  if (pipe && !Object.keys(d.phases).length) {
+    const list = Array.isArray(pipe) ? pipe : arr(pick(pipe.stages, pipe.phases, pipe.pipeline)).length ? arr(pick(pipe.stages, pipe.phases, pipe.pipeline)) : Object.entries(pipe).filter(([, v]) => v && typeof v === 'object').map(([k, v]) => ({ stage: k, ...v }));
+    list.forEach(s => { const k = phaseOf(pick(s.stage, s.phase, s.status, s.key)); const n = num(pick(s.count, s.orders, s.n)); if (n != null) d.phases[k] = (d.phases[k] || 0) + n; if (d.escrowHeld == null && LIVE_PHASES.includes(k)) d._held = (d._held || 0) + (num(pick(s.amount && typeof s.amount === 'object' ? s.amount.amount : s.amount, s.total, s.value)) || 0); });
+    if (d.escrowHeld == null && d._held != null) d.escrowHeld = d._held;
+  }
+  if (d.liveOrders == null && Object.keys(d.phases).length) d.liveOrders = LIVE_PHASES.reduce((n, k) => n + (d.phases[k] || 0), 0);
+  const r = rules && typeof rules === 'object' ? rules : {};
+  return {
+    d, gatewayPct: pick(d.gatewayPct, num(pick(r.gatewayPct, r.gatewayPercent, r.gateway_pct))), commissionPct: pick(d.commissionPct, num(pick(r.commissionPct, r.commissionPercent))),
+    pend: ver && ver.map(toVerification), reps: rep && rep.map(toReport), disp: dis && dis.map(toDispute), bids: bids && bids.map(toBidAlert),
+    audit: aud ? aud.rows.map(toAudit) : null, chain
+  };
+}
+const chainOk = c => (c == null ? null : typeof c === 'boolean' ? c : c.valid ?? c.ok ?? c.intact ?? (typeof c.status === 'string' ? /ok|valid|intact/i.test(c.status) : null));
+const chainCount = c => (c && typeof c === 'object' ? num(pick(c.count, c.entries, c.checked, c.total)) : null);
 
-/* the audit chain's state, wherever the dashboard puts it */
-function chainOf(d) {
-  if (!d || typeof d !== 'object') return null;
-  const k = Object.keys(d).find(x => /audit|chain/i.test(x));
-  if (!k) return null;
-  const v = d[k];
-  const ok = typeof v === 'boolean' ? v : v && typeof v === 'object' ? (v.valid ?? v.ok ?? v.intact ?? (typeof v.status === 'string' ? /ok|valid|intact|healthy/i.test(v.status) : null)) : typeof v === 'string' ? /ok|valid|intact|healthy/i.test(v) : null;
-  return { ok, v };
+/* alerts: suspicious bids, payment complaints, disputes due within 2 days */
+function alertsOf(x) {
+  const out = [];
+  (x.bids || []).filter(a => a.status === 'open').forEach(a => out.push({ g: 'bids', id: a.id, ic: 'bids', tone: a.risk >= 70 ? 'err' : 'warn', title: a.pattern, text: a.detail, risk: a.risk, meta: L.ago(a.at), go: '#marketplace-bids', cta: 'Review bids' }));
+  (x.disp || []).filter(d => d.status === 'open').forEach(d => {
+    const o = d.orderRec || {}, days = daysTo(d.sla), pay = /pay/.test(d.kind);
+    if (!pay && (days == null || days > 2)) return;
+    out.push({ g: pay ? 'pay' : 'disp', id: d.id, ic: pay ? 'coin' : 'flag', tone: pay ? 'escrow' : days <= 1 ? 'warn' : 'plain',
+      title: pay ? `Payment complaint${o.creatorName ? ' from ' + first(o.creatorName) : ''}` : `Dispute ${(d.ref || d.id.slice(0, 8)).toUpperCase()}${o.brandName && o.creatorName ? ` · ${o.brandName} and ${o.creatorName}` : ''}`,
+      text: d.claim, meta: dueTxt(days), urgent: days != null && days <= 1, amt: o.amount, go: '#dispute-' + d.id, cta: pay ? 'Check payout' : 'Arbitrate' });
+  });
+  return out;
 }
 
 export default function Home() {
   const root = useRef(null);
   const rerender = useRerender();
-  const dash = useLoad(() => api.dashboard().then(d => { setEscrow(d); return d; }), []);
-  useEffect(() => { refreshCounts(); return store.on(why => { if (why === 'live') rerender(); }); }, []);
-  useStagger(root, '.home-obj, .adm-card, .adm-band>div', [!!dash.data]);
+  const r = useLoad(loadAll, []);
+  useEffect(() => { refreshCounts(); }, []);
+  const x = r.data, s = store.s, u = ui(), now = new Date();
+  const first_ = useRef(true);
+  useLayoutEffect(() => {
+    if (!x || !root.current) return;
+    if (first_.current) { first_.current = false; mo('stagger', L.$$('.home-obj, .home-al-i, .home-act-l>li', root.current)); const bar = root.current.querySelector('.home-ac-bar'); bar && requestAnimationFrame(() => bar.classList.add('is-in')); }
+    else root.current.querySelectorAll('.home-ac-bar').forEach(b => b.classList.add('is-in', 'is-now'));
+  }, [x]);
 
-  const s = store.s, now = new Date(), lv = live(), counts = lv.counts || {};
-  const cReady = lv.cstatus === 'ready';
   let whenStr = '';
   try {
     const tz = { timeZone: 'Asia/Kolkata' };
@@ -56,66 +102,115 @@ export default function Home() {
       new Intl.DateTimeFormat('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true, ...tz }).format(now).replace(/\s?(am|pm)/i, m => ' ' + m.trim().toUpperCase()) + ' IST';
   } catch (e) {}
 
-  /* prefer the dashboard's pending-queue numbers, fall back to counts */
-  const src = { ...(dash.data || {}), ...counts };
-  const qs = QUEUES.map(([k, t, pats, href, ic, area]) => ({ k, t, href, ic, area, n: pats.reduce((n, p) => n || countOf(src, p), 0) }));
-  const waiting = qs.filter(q => q.n && can(q.area));
-  const total = waiting.reduce((n, q) => n + q.n, 0);
-  const lede = !cReady && !dash.data ? (lv.cstatus === 'failed' && dash.err ? 'The dashboard did not load.' : 'Loading the dashboard.')
-    : total ? `${plural(total, 'item')} ${total === 1 ? 'is' : 'are'} waiting for a decision.` : 'Nothing is waiting for a decision.';
+  const head = lede => (
+    <header className="home-hi">
+      <p className="home-when">{whenStr}</p>
+      <h1 className="home-greet">{`${greeting(now)}${s.me.name ? ', ' + first(s.me.name) : ''}.`}</h1>
+      <p className="home-lede">{lede}</p>
+    </header>
+  );
+  if (!x) return <div className="view-in home" ref={root}>{head(r.err ? 'The dashboard did not load.' : 'Loading the dashboard. The Linkloom server can take up to a minute to wake up.')}</div>;
 
-  const d = dash.data && typeof dash.data === 'object' ? dash.data : null;
-  const chain = chainOf(d);
-  /* headline money: top-level and one level down, money-named numbers only */
-  const money = [];
-  if (d) for (const [k, v] of Object.entries(d)) {
-    if (typeof v === 'number' && isMoneyKey(k)) money.push([label(k), v]);
-    else if (v && typeof v === 'object' && !Array.isArray(v)) for (const [k2, v2] of Object.entries(v)) if ((typeof v2 === 'number' || (v2 && typeof v2 === 'object' && 'amount' in v2)) && isMoneyKey(k2)) money.push([`${label(k)} · ${label(k2)}`, v2]);
+  const d = x.d;
+  const crA = d.creatorsActive, brA = d.brandsActive, crS = d.creatorsSuspended, brS = d.brandsSuspended, brUnv = d.brandsUnverified;
+  const tot = (crA || 0) + (brA || 0) || 1;
+  const live = d.liveOrders, held = d.escrowHeld;
+  const phases = Object.keys(PHASE).map(k => [k, d.phases[k] || 0]).filter(p => p[1]);
+  const pend = (x.pend || []).filter(v => v.status === 'pending');
+  const repOpen = (x.reps || []).filter(rp => rp.status === 'open').sort((a, b) => (b.severity === 'high') - (a.severity === 'high') || b.count - a.count);
+  const dOpen = (x.disp || []).filter(dp => dp.status === 'open').sort((a, b) => (Date.parse(a.sla) || Infinity) - (Date.parse(b.sla) || Infinity));
+  const al = alertsOf(x), alShown = u.afilter === 'all' ? al : al.filter(a => a.g === u.afilter);
+  const urgentN = (pend.length ? 1 : 0) + (repOpen.length ? 1 : 0) + (dOpen.length ? 1 : 0);
+  const cOk = chainOk(x.chain), cN = chainCount(x.chain);
+  const gw = x.gatewayPct, cm = x.commissionPct == null ? 0 : x.commissionPct;
+
+  /* ---- urgent actions: three real objects ---- */
+  const objs = [];
+  if (pend.length) {
+    const over = pend.filter(v => hoursSince(v.submitted) > 24).length, flagged = pend.filter(v => vFlags(v, ageFrom).length).length;
+    const top = [...pend].sort((a, b) => vFlags(b, ageFrom).length - vFlags(a, ageFrom).length || (Date.parse(a.submitted) || 0) - (Date.parse(b.submitted) || 0)).slice(0, 4);
+    objs.push(<li className="home-obj home-vq" key="vq">
+      <div className="home-obj-top"><span className="pill pill-info"><Icon n="verified" />{plural(pend.length, 'verification')} waiting</span>{over ? <span className="home-due"><Icon n="clock" />{over} past the 24 h target</span> : null}</div>
+      <ul className="home-q">{top.map(v => { const f = vFlags(v, ageFrom), k = v.kind, h = hoursSince(v.submitted); return <li key={v.id}><a className="home-q-a" href={`#verify-${v.id}`}>
+        <HAv name={v.name} kind={k} /><span className="home-q-t"><b className={`is-${k}`}>{v.name}</b><span>{k === 'brand' ? 'Brand · GSTIN, PAN, signatory' : 'Creator · ID, PAN, bank, socials'}</span></span>
+        <span className="home-q-m">{f.length ? <span className="pill pill-err"><Icon n="alert" />{f[0]}{f.length > 1 ? ` +${f.length - 1}` : ''}</span> : null}<span className={`home-q-age num ${h > 24 ? 'is-late' : ''}`}>{!v.submitted ? '' : h < 1 ? 'just now' : h < 24 ? Math.round(h) + ' h' : Math.floor(h / 24) + ' d ' + Math.round(h % 24) + ' h'}</span></span></a></li>; })}</ul>
+      <div className="home-obj-act"><Lq as="a" className="lq-p lq-sm" href="#verify">Open the desk</Lq>{flagged ? <span className="home-obj-foot">{plural(flagged, 'has', 'have')} a problem to look at</span> : null}</div>
+    </li>);
   }
-  const groups = d ? Object.entries(d).filter(([k, v]) => v && typeof v === 'object' && !Array.isArray(v) && !/audit|chain/i.test(k)) : [];
-  const loose = d ? Object.fromEntries(Object.entries(d).filter(([k, v]) => (v == null || typeof v !== 'object') && !(typeof v === 'number' && isMoneyKey(k)))) : {};
+  if (repOpen.length) {
+    objs.push(<li className="home-obj home-rep" key="rep">
+      <div className="home-obj-top"><span className="pill pill-err"><Icon n="flag" />{plural(repOpen.length, 'open report')}</span><span className="home-due">{repOpen.reduce((n, rp) => n + rp.count, 0)} flags in total</span></div>
+      <ul className="home-rl">{repOpen.slice(0, 3).map(rp => <li key={rp.id}><a className="home-rl-a" href={`#report-${rp.id}`}>
+        <span className={`home-sev is-${rp.severity}`}><i></i><i></i><i></i><span className="sr-only">{rp.severity} severity</span></span>
+        <span className="home-rl-t"><span className="home-rl-k">{rp.type} · {rp.count > 1 ? `${rp.count} reports` : `by ${rp.by}`}</span><b>{rp.reason}</b>{rp.excerpt ? <q>{rp.excerpt}</q> : <span className="home-rl-x">{rp.target}</span>}</span></a></li>)}</ul>
+      <div className="home-obj-act"><Lq as="a" className="lq-p lq-sm" href="#moderation">Review reports</Lq></div>
+    </li>);
+  }
+  if (dOpen.length) {
+    const dp = dOpen[0], o = dp.orderRec || {}, days = daysTo(dp.sla);
+    objs.push(<li className="home-obj home-disp ink-card dark" key="disp">
+      <div className="home-obj-top"><span className="pill pill-butter"><Icon n="clock" />{dueTxt(days)}</span><span className="home-disp-id num">{(dp.ref || dp.id.slice(0, 8)).toUpperCase()} · opened by {dp.by}</span></div>
+      {o.brandName || o.creatorName ? <p className="home-disp-who"><span className="is-brand">{o.brandName}</span> <span aria-hidden="true">×</span><span className="sr-only">and</span> <span className="is-creator">{o.creatorName}</span></p> : null}
+      <p className="home-disp-c">{`“${dp.claim}”`}</p>
+      {o.amount ? <p className="t-money home-disp-v">{L.inr(o.amount)}</p> : null}
+      <p className="home-disp-s"><span className="pill pill-escrow"><Icon n="lock" />Held in escrow</span><span>{o.title}</span></p>
+      <div className="home-obj-act"><Lq as="a" className="lq-p lq-sm" href={`#dispute-${dp.id}`}>Arbitrate</Lq>{dOpen.length > 1 ? <a className="btn-q" href="#orders-disputes">+{dOpen.length - 1} more open</a> : null}</div>
+      <p className="home-disp-f">Force release or refund, each with a reason on record.</p>
+    </li>);
+  }
 
+  const n = v => (v == null ? '—' : v);
   return (
-    <div className="view-in home adm no-anchor" ref={root}>
-      <header className="home-hi">
-        <p className="home-when">{whenStr}</p>
-        <h1 className="home-greet">{`${greeting(now)}${s.me.name ? ', ' + first(s.me.name) : ''}.`}</h1>
-        <p className="home-lede">{lede}</p>
-      </header>
+    <div className="view-in home" ref={root}>
+      {head(<>{urgentN ? `${WORDS[urgentN]} ${urgentN === 1 ? 'needs' : 'need'} a decision today${al.length ? `, and ${plural(al.length, 'alert')} to read` : ''}.` : 'Nothing is waiting on you. The desks are clear.'}{' '}
+        <button className="btn-q" type="button" onClick={() => { refreshCounts(); r.reload(); }}><Icon n="refund" />Refresh</button></>)}
 
-      <section aria-labelledby="homeQ">
-        <div className="home-sec-h"><h2 className="t-h2" id="homeQ">Queues</h2><button className="btn-q" type="button" onClick={() => { refreshCounts(); dash.reload(); }}><Icon n="refund" />Refresh</button></div>
-        <dl className="adm-band">{qs.map(q => (
-          <div key={q.k}><a href={q.href} aria-label={`${q.t}: ${cReady || d ? q.n : 'loading'}. Open`}>
-            <dt><Icon n={q.ic} className="ic" /> {q.t}</dt><dd>{cReady || d ? q.n : '—'}</dd>
-            <p>{!can(q.area) ? 'Not in your role' : q.n ? 'Open the queue' : 'Clear'}</p></a></div>))}</dl>
+      <section className="home-band" aria-label="Platform at a glance">
+        <dl className="home-nums">
+          <div className="home-ac"><dt>Active creators and brands</dt>
+            <dd className="home-ac-n"><Count className="t-money is-creator" value={crA} fmt={v => (v == null ? '—' : String(Math.round(v)))} /><span className="home-ac-vs" aria-hidden="true">/</span><Count className="t-money is-brand" value={brA} fmt={v => (v == null ? '—' : String(Math.round(v)))} />
+              <span className="sr-only">{`: ${plural(crA || 0, 'active creator')} and ${plural(brA || 0, 'active brand')}`}</span></dd>
+            <div className="home-ac-bar" role="img" aria-label={`${Math.round((crA || 0) / tot * 100)}% creators, ${Math.round((brA || 0) / tot * 100)}% brands`}><i className="is-creator" style={{ flexGrow: crA || 0 }}></i><i className="is-brand" style={{ flexGrow: brA || 0 }}></i></div>
+            <p className="home-num-s"><span className="home-key is-creator"></span>Creators{crS ? ` · ${crS} suspended` : ''}<span className="home-key is-brand"></span>Brands{brUnv ? ` · ${brUnv} not verified` : ''}{brS ? ` · ${brS} suspended` : ''}</p></div>
+          <div><dt>Live orders in progress</dt><dd><Count className="t-money" value={live} fmt={v => (v == null ? '—' : String(Math.round(v)))} /></dd>
+            <p className="home-num-s home-ph">{phases.map(([k, c]) => <span className={`home-ph-i ${k === 'disputed' ? 'is-hot' : ''}`} key={k}><b className="num">{c}</b> {PHASE[k].toLowerCase()}</span>)}</p></div>
+          <div><dt>Escrow balance</dt><dd><Count className="t-money" value={held} fmt={v => (v == null ? '—' : L.inr(v))} /></dd>
+            <p className="home-num-s"><span className="pill pill-escrow"><Icon n="lock" />Held for {plural(n(live) === '—' ? 0 : live, 'order')}</span></p></div>
+        </dl>
+        <div className="home-comm">
+          <p><b>Commission {L.inr(0)}</b> · No commission under the subscription model <span className="pill pill-line home-comm-r">Rate {cm}%</span></p>
+          <p className="home-comm-s">Gateway fees{gw != null ? ` (${gw}%)` : ''} are a Linkloom cost, never charged to brands or creators. {can('finance') ? <a className="btn-q" href="#finance">Financials<Icon n="arrow" /></a> : null}</p>
+        </div>
       </section>
 
-      {dash.err ? <Failed err={dash.err} retry={dash.reload} what="The dashboard" /> : null}
+      <section className="home-today" aria-labelledby="homeUrgH">
+        <div className="home-sec-h"><h2 className="t-h2" id="homeUrgH">Urgent actions</h2></div>
+        {objs.length ? <ul className={`home-strip home-strip-${Math.min(objs.length, 3)}`}>{objs}</ul>
+          : <div className="empty home-empty"><img src="assets/step-05-stamp.svg" width="160" height="117" alt="" /><p className="t-h3">The desks are clear.</p><p className="muted">Verifications, reports and disputes show up here as they arrive.</p></div>}
+      </section>
 
-      {money.length ? <section aria-labelledby="homeM">
-        <div className="home-sec-h"><h2 className="t-h2" id="homeM">Escrow and money</h2>{can('finance') ? <Lq as="a" className="lq-s lq-sm" href="#finance">Financials</Lq> : null}</div>
-        <dl className="adm-band">{money.map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{inr(v)}</dd></div>)}</dl>
-      </section> : null}
+      <div className="home-two">
+        <section className="home-al" aria-labelledby="homeAlH">
+          <div className="home-sec-h"><div><h2 className="t-h2" id="homeAlH">Alerts</h2><p className="muted t-small">Bid patterns the system flagged, payment complaints and disputes due within 2 days.</p></div></div>
+          <div className="home-al-f chips" role="group" aria-label="Show alerts">{GROUPS.map(([k, t]) => { const c = k === 'all' ? al.length : al.filter(a => a.g === k).length; return <button className="chip" type="button" key={k} aria-pressed={u.afilter === k} onClick={() => { u.afilter = k; rerender(); requestAnimationFrame(() => mo('stagger', L.$$('.home-al-i', root.current))); }}>{t} <span className="num home-chip-n">{c}</span></button>; })}</div>
+          {alShown.length ? <ul className="home-al-l" aria-live="polite">{alShown.map(a => <li className="home-al-i" key={a.g + a.id}>
+            <span className={`home-al-ic is-${a.tone}`} aria-hidden="true"><Icon n={a.tone === 'err' ? 'alert' : a.ic} /></span>
+            <div className="home-al-t"><p className="home-al-h"><b>{a.title}</b>{a.risk != null ? <span className={`home-risk ${a.risk >= 70 ? 'is-hi' : ''}`} role="img" aria-label={`Risk ${a.risk} of 100`}><span className="home-risk-b"><i style={{ width: a.risk + '%' }}></i></span><span className="num">{a.risk}</span></span> : null}</p>
+              <p className="home-al-s">{a.text}</p>
+              <p className="home-al-m"><span className={a.urgent ? 'is-urgent' : ''}><Icon n="clock" />{a.meta}</span>{a.amt ? <span className="pill pill-escrow"><Icon n="lock" />{L.inr(a.amt)}</span> : null}</p></div>
+            <a className="btn-q home-al-go" href={a.go}>{a.cta}<Icon n="arrow" /></a></li>)}</ul>
+            : <p className="home-al-none muted">No alerts of this kind right now.</p>}
+        </section>
 
-      {chain ? <section aria-labelledby="homeA">
-        <div className="home-sec-h"><h2 className="t-h2" id="homeA">Audit chain</h2>{can('audit') ? <Lq as="a" className="lq-s lq-sm" href="#audit">Audit log</Lq> : null}</div>
-        <div className={`adm-chain ${chain.ok === true ? 'is-ok' : chain.ok === false ? 'is-err' : 'is-idle'}`}><Icon n={chain.ok === false ? 'alert' : 'shield'} />
-          <div><b>{chain.ok === true ? 'The hash chain is intact.' : chain.ok === false ? 'The hash chain does not verify.' : 'Audit chain status'}</b>
-            {chain.v && typeof chain.v === 'object' ? <Fields obj={chain.v} /> : null}</div></div>
-      </section> : null}
-
-      {d ? <section aria-labelledby="homeH">
-        <div className="home-sec-h"><h2 className="t-h2" id="homeH">Platform health</h2></div>
-        <div className="grid-2 adm-grid2">
-          {Object.keys(loose).length ? <section className="card adm-card"><h3 className="t-h3">Overview</h3><Fields obj={loose} /></section> : null}
-          {groups.map(([k, v]) => <section className="card adm-card" key={k}><h3 className="t-h3">{label(k)}</h3><Fields obj={v} /></section>)}
-          {Object.entries(d).filter(([, v]) => Array.isArray(v)).map(([k, v]) => <section className="card adm-card" key={k}><h3 className="t-h3">{label(k)}</h3>
-            {v.length ? <ul className="stack">{v.slice(0, 8).map((x, i) => <li key={i}>{x && typeof x === 'object' ? <Fields obj={x} /> : fmt(k, x)}</li>)}</ul> : <p className="muted">None.</p>}</section>)}
-        </div>
-      </section> : dash.loading ? <div className="empty"><p className="t-h3">Loading the dashboard</p><p className="muted">The Linkloom server can take up to a minute to wake up.</p></div> : null}
-
-      {!waiting.length && (cReady || d) ? <div className="empty home-empty"><img src="assets/step-05-stamp.svg" width="160" height="117" alt="" /><p className="t-h3">All queues are clear.</p><p className="muted">New verifications, reports and disputes show up here as they come in.</p></div> : null}
+        {x.audit ? <section className="home-act card" aria-labelledby="homeActH">
+          <div className="home-act-h"><h2 className="t-h3" id="homeActH">Recent activity</h2><a className="btn-q" href="#audit">Audit log<Icon n="arrow" /></a></div>
+          {x.audit.length ? <ol className="home-act-l">{x.audit.slice(0, 5).map((e, i) => { const isMe = e.who === s.me.name || (s.me.email && e.who === s.me.email); return <li key={e.id || i}>
+            <HAv name={e.who} kind={isMe ? 'me' : 'admin'} />
+            <div className="home-act-t"><p><b>{isMe ? 'You' : first(e.who)}</b> {auditLabel(e.action).toLowerCase()}</p><p className="home-act-x">{e.target}</p></div>
+            <span className="home-act-at num">{L.ago(e.at)}</span></li>; })}</ol> : <p className="muted">No admin actions yet.</p>}
+          {cOk != null ? <p className={`home-act-f ${cOk ? 'is-ok' : 'is-bad'}`}><Icon n={cOk ? 'shield' : 'alert'} /><span>{cOk ? `Chain intact${cN != null ? ` · ${plural(cN, 'sealed entry', 'sealed entries')}` : ''}` : `Chain broken${x.chain && x.chain.brokenAt ? ` at ${x.chain.brokenAt}` : ''}`}</span></p> : null}
+        </section> : null}
+      </div>
     </div>
   );
 }

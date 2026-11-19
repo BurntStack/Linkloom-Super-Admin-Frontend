@@ -17,7 +17,7 @@ export const api = {
   brand: id => get(`${A}/users/brands/${e(id)}/`),
   suspend: (userId, body) => post(`${A}/users/${e(userId)}/suspend/`, body),
   reactivate: (userId, body) => post(`${A}/users/${e(userId)}/reactivate/`, body),
-  passwordReset: userId => post(`${A}/users/${e(userId)}/password-reset/`, {}),
+  passwordReset: (userId, body = {}) => post(`${A}/users/${e(userId)}/password-reset/`, body),
   sessions: userId => page(`${A}/users/${e(userId)}/sessions/`, { limit: 50 }),
   revokeSessions: (userId, body = {}) => post(`${A}/users/${e(userId)}/sessions/revoke/`, body),
   categories: (q, cursor) => page(`${A}/users/categories/`, { query: q, cursor, limit: 100 }),
@@ -31,7 +31,7 @@ export const api = {
   /* C. verification desk */
   verifications: (q, cursor) => page(`${A}/verifications/`, { query: q, cursor }),
   verification: id => get(`${A}/verifications/${e(id)}/`),
-  approveVerification: id => post(`${A}/verifications/${e(id)}/approve/`, {}),
+  approveVerification: (id, body = {}) => post(`${A}/verifications/${e(id)}/approve/`, body),
   rejectVerification: (id, body) => post(`${A}/verifications/${e(id)}/reject/`, body),
   requestInfo: (id, body) => post(`${A}/verifications/${e(id)}/request-info/`, body),
 

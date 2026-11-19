@@ -4,6 +4,7 @@ import L from '../lib/core.js';
 import { useStore } from '../lib/hooks.js';
 import Icon from './Icon.jsx';
 import { openAlerts } from './AlertsSheet.jsx';
+import { ROLE_NAME } from '../lib/admin.js';
 
 const cur = (nav, key) => (nav === key ? { 'aria-current': 'page' } : {});
 const Badge = ({ n }) => <span className="badge" hidden={!n}>{n}</span>;
@@ -24,16 +25,17 @@ export function Sidebar({ nav }) {
           <a href="#finance" data-nav="finance" {...cur(nav, 'finance')}>Financials</a>
           <a href="#audit" data-nav="audit" {...cur(nav, 'audit')}>Audit log</a>
         </nav>
-        <p className="nav-note">Linkloom admin console</p>
+        <p className="nav-note">Admin console · every action is logged</p>
       </div>
       <a className="sbox slipbox" href="#orders">
         <span className="t-cap slip-l">Escrow balance</span>
         <span className="t-money t-money-m">{s.live && s.live.escrow != null ? L.inr(s.live.escrow) : '—'}</span>
-        <span className="slip-plan">{s.live && s.live.escrow != null ? 'Held for orders in progress' : 'Open Orders & escrow for the pipeline'}</span>
+        {s.live && s.live.liveOrders ? <span className="pill pill-escrow"><Icon n="lock" /> {s.live.liveOrders} live orders</span> : null}
+        <span className="slip-plan">{s.live && s.live.escrow != null ? 'Audit log · every action sealed' : 'Open Orders & escrow for the pipeline'}</span>
       </a>
       <a className="sbox me" href="#security" data-nav="security" {...cur(nav, 'security')}>
         <span className="avatar" data-me-initials="">{L.initials(s.me.name)}</span>
-        <span className="me-t"><b>{s.me.name}</b><span>{s.me.role && s.me.role !== 'Admin' ? s.me.role : (s.me.email || s.me.role)}</span></span>
+        <span className="me-t"><b>{s.me.name}</b><span>{(ROLE_NAME[s.me.adminRole] || s.me.email || 'Admin') + ' · MFA on'}</span></span>
       </a>
     </aside>
   );
