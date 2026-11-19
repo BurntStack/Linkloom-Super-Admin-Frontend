@@ -7,7 +7,7 @@
    - Featured    GET /v1/admin/users/featured-creators/ · PUT /v1/admin/users/featured-creators/order/ { creatorIds }
    - Categories  GET/POST /v1/admin/users/categories/ · PATCH .../<id>/ · POST .../<id>/merge/
    Creators coral, brands violet. Money is integer paise. */
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import L, { data } from '../lib/core.js';
 import { useRerender } from '../lib/hooks.js';
 import { api, can, str, pick, num, arr, nameOf, idOf, label } from '../lib/admin.js';
@@ -21,13 +21,32 @@ const TABS = [['campaigns', 'Campaigns'], ['bids', 'Bid alerts'], ['reviews', 'R
 const ui = () => (data.ui.mk = data.ui.mk || { filter: 'pending', rstatus: 'flagged' });
 
 /* ----- campaigns ----- */
+/* The review state (pending / live / hidden / rejected / removed) is separate from `status`, which is the brief's own
+   lifecycle ("open" for bids). Its field name differs between the public and admin APIs, so look for it under every
+   likely name, then any field named like moderation/review/approval. Returns '' when the record does not say. */
+function reviewOf(k) {
+  if (!k || typeof k !== 'object') return '';
+  const m = k.moderation && typeof k.moderation === 'object' ? k.moderation : null;
+  const direct = pick(k.moderationStatus, m && pick(m.status, m.state), typeof k.moderation === 'string' ? k.moderation : null,
+    k.reviewStatus, k.reviewState, k.moderationState, k.approvalStatus, k.adminStatus, k.listingStatus, k.visibility);
+  if (str(direct)) return str(direct).toLowerCase();
+  for (const [key, v] of Object.entries(k)) if (/moderat|review|approv/i.test(key) && typeof v === 'string' && v) return v.toLowerCase();
+  if (k.isApproved === false || k.approved === false) return 'pending';
+  if (k.isApproved === true || k.approved === true) return 'live';
+  if (k.isHidden === true || k.hidden === true) return 'hidden';
+  return '';
+}
 const camp = k => ({
-  id: str(k.id), title: str(pick(k.title, k.name, 'Untitled campaign')), status: str(pick(k.status, k.moderationStatus)).toLowerCase(),
+  id: str(k.id), title: str(pick(k.title, k.name, 'Untitled campaign')),
+  review: reviewOf(k), lifecycle: str(k.status).toLowerCase(),
+  status: reviewOf(k) || str(k.status).toLowerCase(),
   brand: nameOf(pick(k.brand, k.brandName, k.owner)), brandId: idOf(pick(k.brand, k.brandId)), platform: str(k.platform),
   budgetMin: pick(k.budgetMin, k.budget && k.budget.min), budgetMax: pick(k.budgetMax, k.budget && k.budget.max, k.budget),
   bids: num(pick(k.bidCount, k.bids && typeof k.bids === 'number' ? k.bids : null, k.bidsSummary && k.bidsSummary.count)) || 0,
   closesAt: str(k.closesAt), createdAt: str(pick(k.submittedAt, k.createdAt)), flags: num(pick(k.flagCount, k.reportCount)) || 0
 });
+/* waiting for an admin decision, whatever the backend calls it */
+const isPending = s => /pending|review|submitted|awaiting|queued/.test(s);
 const budget = c => (c.budgetMin != null && c.budgetMax != null && c.budgetMin !== c.budgetMax ? `${inr(c.budgetMin)} to ${inr(c.budgetMax)}` : c.budgetMax != null ? inr(c.budgetMax) : c.budgetMin != null ? inr(c.budgetMin) : '—');
 
 function TabCampaigns() {
@@ -38,15 +57,27 @@ function TabCampaigns() {
   useStagger(box, '.adm-row', [p.loading, u.filter]);
   const rows = p.rows.map(camp);
   const counts = (p.meta && p.meta.counts) || {};
+  /* decide straight from the queue; the brief leaves the "To review" list once decided */
+  const quick = (c, action) => () => decide(action === 'approve'
+    ? { title: `Approve “${c.title}”?`, confirm: 'Approve', toast: 'Campaign approved', intro: 'It goes live and creators can bid on it.', fields: [],
+        run: b => api.campaignAction(c.id, 'approve', b), done: () => { refreshCounts(); u.filter === 'pending' ? p.drop(c.id) : p.reload(); } }
+    : { title: `Reject “${c.title}”?`, confirm: 'Reject', tone: 'danger', toast: 'Campaign rejected',
+        fields: [reason(4, 'Reason', 'Shown to the brand. At least 4 characters.'), { k: 'ruleBroken', label: 'Rule broken', type: 'select', options: RULES }],
+        run: b => api.campaignAction(c.id, 'reject', b), done: () => { refreshCounts(); u.filter === 'pending' ? p.drop(c.id) : p.reload(); } });
   return (
     <div className="stack" ref={box}>
       <Seg label="Show" value={u.filter} onChange={v => { u.filter = v; rerender(); }} opts={[['pending', 'To review'], ['flagged', 'Flagged'], ['live', 'Live'], ['hidden', 'Hidden'], ['rejected', 'Rejected'], ['removed', 'Removed'], ['all', 'All']].map(([k, t]) => [k, t, num(counts[k]) ?? undefined])} />
       <RoleNote area="campaigns" doing="Moderating campaigns" />
       {p.err ? <Failed err={p.err} retry={p.reload} what="Campaigns" /> : p.loading ? <Loading what="campaigns" />
-        : rows.length ? <ul className="adm-list no-anchor">{rows.map(c => <Row key={c.id} href={`#campaign-${c.id}`} kind="brand" title={c.title}
+        : rows.length ? <ul className="adm-list no-anchor">{rows.map(c => <Fragment key={c.id}><Row href={`#campaign-${c.id}`} kind="brand" title={c.title}
             sub={[c.brand || 'Brand not given', plat(c.platform), c.createdAt ? `Sent ${when(c.createdAt)}` : ''].filter(Boolean).join(' · ')}
             pills={<><Status s={c.status} />{c.flags ? <span className="pill pill-err"><Icon n="flag" />{c.flags}</span> : null}<span className="pill pill-line">{`${c.bids} bid${c.bids === 1 ? '' : 's'}`}</span></>}
-            right={budget(c)} />)}</ul>
+            right={budget(c)} />
+            {u.filter === 'pending' || isPending(c.review) ? <li className="adm-acts mk-quick" aria-label={`Decide on ${c.title}`}>
+              <ActBtn area="campaigns" ic="check" tone="p" onClick={quick(c, 'approve')}>Approve</ActBtn>
+              <ActBtn area="campaigns" ic="close" onClick={quick(c, 'reject')}>Reject</ActBtn>
+              <a className="btn-q" href={`#campaign-${c.id}`}>Review details</a>
+            </li> : null}</Fragment>)}</ul>
         : <Empty title={u.filter === 'pending' ? 'No campaigns waiting for review.' : 'No campaigns here.'} text="New campaigns show up when brands post them." />}
       <More p={p} />
     </div>
@@ -68,13 +99,23 @@ function CampaignDetail({ id }) {
     title: t, confirm: o.confirm || label(action), tone: o.tone, toast: o.toast || 'Done', intro: o.intro,
     fields: o.fields || [reason(4)], run: b => api.campaignAction(c.id, action, b), done: after
   });
-  const st = c.status;
+  /* Which actions apply. When the record names no review state, every action is offered: hiding a decision because
+     the field is missing is what left admins with only "Remove". The backend refuses any action that does not apply. */
+  const rv = c.review, known = !!rv;
+  const isLive = /^(live|approved|published|active|visible)$/.test(rv), isOff = /hidden|removed|rejected/.test(rv), isRemoved = /removed/.test(rv);
+  const show = {
+    approve: !known || isPending(rv) || /flagged|hidden|rejected/.test(rv),
+    reject: !known || (!isOff && !isRemoved),
+    hide: !known || (!isOff && !isRemoved),
+    remove: !isRemoved,
+    restore: !known || isOff
+  };
   const signals = arr(pick(d.signals, d.briefSignals)), changed = d.changedFields;
   return (
     <div className="view-in adm" ref={root}>
       {back}
       <header className="adm-mast">
-        <div className="adm-mast-t"><p className="row wrap"><Status s={st} />{c.platform ? <span className="pill pill-line"><Glyph p={c.platform} />{plat(c.platform)}</span> : null}</p>
+        <div className="adm-mast-t"><p className="row wrap">{known ? <Status s={rv} text={`Review: ${label(rv)}`} /> : <span className="pill pill-warn">Review state not sent</span>}{c.lifecycle ? <Status s={c.lifecycle} text={`Brief: ${label(c.lifecycle)}`} /> : null}{c.platform ? <span className="pill pill-line"><Glyph p={c.platform} />{plat(c.platform)}</span> : null}</p>
           <h1 className="t-h1">{c.title}</h1>
           <p className="muted">{c.brand ? <Who kind="b" name={c.brand} sub="Brand" href={c.brandId ? `#brand-${c.brandId}` : ''} /> : 'Brand not given'}</p></div>
         <dl className="adm-band" style={{ flex: '1 1 320px' }}><div><dt>Budget</dt><dd>{budget(c)}</dd></div><div><dt>Bids</dt><dd>{c.bids}</dd></div>{c.closesAt ? <div><dt>Closes</dt><dd>{L.fmtDate(c.closesAt)}</dd></div> : null}</dl>
@@ -95,12 +136,16 @@ function CampaignDetail({ id }) {
           {d.bidsSummary && typeof d.bidsSummary === 'object' ? <section className="card adm-card"><h2 className="t-h3">Bids summary</h2><Fields obj={d.bidsSummary} /></section> : null}
           <section className="card adm-card"><h2 className="t-h3">Moderation</h2>
             <RoleNote area="campaigns" doing="Moderating campaigns" />
+            <p className="muted">{isPending(rv) ? 'This brief is waiting for your decision. Approve it to put it live for creators, or reject it with a reason the brand will see.'
+              : isLive ? 'This brief is live. Creators can see it and bid.'
+              : isOff ? `This brief is ${label(rv).toLowerCase()}. Creators cannot see it.`
+              : known ? `Review state: ${label(rv)}.` : 'The API did not say whether this brief has been reviewed, so every action is offered.'}</p>
             <div className="adm-acts">
-              {/pending/.test(st) ? <ActBtn area="campaigns" ic="check" tone="p" onClick={act('approve', 'Approve this campaign?', { fields: [], intro: 'It goes live and creators can bid on it.', toast: 'Campaign approved' })}>Approve</ActBtn> : null}
-              {/pending|flagged|live/.test(st) ? <ActBtn area="campaigns" ic="close" onClick={act('reject', 'Reject this campaign?', { tone: 'danger', toast: 'Campaign rejected', fields: [reason(4, 'Reason', 'Shown to the brand. At least 4 characters.'), { k: 'ruleBroken', label: 'Rule broken', type: 'select', options: RULES }] })}>Reject</ActBtn> : null}
-              {/live|flagged|pending/.test(st) ? <ActBtn area="campaigns" ic="eye" onClick={act('hide', 'Hide this campaign?', { toast: 'Campaign hidden', intro: 'Creators stop seeing it; the brand keeps it.' })}>Hide</ActBtn> : null}
-              {!/removed/.test(st) ? <ActBtn area="campaigns" ic="trash" onClick={act('remove', 'Remove this campaign?', { tone: 'danger', toast: 'Campaign removed' })}>Remove</ActBtn> : null}
-              {/hidden|removed|rejected/.test(st) ? <ActBtn area="campaigns" ic="refund" onClick={act('restore', 'Restore this campaign?', { toast: 'Campaign restored' })}>Restore</ActBtn> : null}
+              {show.approve ? <ActBtn area="campaigns" ic="check" tone="p" onClick={act('approve', 'Approve this campaign?', { fields: [], intro: 'It goes live and creators can bid on it.', toast: 'Campaign approved' })}>Approve</ActBtn> : null}
+              {show.reject ? <ActBtn area="campaigns" ic="close" onClick={act('reject', 'Reject this campaign?', { tone: 'danger', toast: 'Campaign rejected', fields: [reason(4, 'Reason', 'Shown to the brand. At least 4 characters.'), { k: 'ruleBroken', label: 'Rule broken', type: 'select', options: RULES }] })}>Reject</ActBtn> : null}
+              {show.hide ? <ActBtn area="campaigns" ic="eye" onClick={act('hide', 'Hide this campaign?', { toast: 'Campaign hidden', intro: 'Creators stop seeing it; the brand keeps it.' })}>Hide</ActBtn> : null}
+              {show.restore ? <ActBtn area="campaigns" ic="refund" onClick={act('restore', 'Restore this campaign?', { toast: 'Campaign restored' })}>Restore</ActBtn> : null}
+              {show.remove ? <ActBtn area="campaigns" ic="trash" onClick={act('remove', 'Remove this campaign?', { tone: 'danger', toast: 'Campaign removed' })}>Remove</ActBtn> : null}
             </div></section>
         </div>
       </div>

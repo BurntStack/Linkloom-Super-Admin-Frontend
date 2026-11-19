@@ -98,3 +98,7 @@ a.adm-row:hover,button.adm-row:hover{box-shadow:var(--ll-shadow-pin);transform:t
 .adm-chain.is-err{background:var(--ll-err-bg);color:var(--ll-err-fg)}
 .adm-chain.is-idle{background:var(--ll-paper-raised)}
 .adm-chain b{color:var(--ll-ink-text)}
+
+/* quick decisions under a campaign row in the "To review" queue */
+.mk-quick{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:-4px 0 6px;padding:0 20px}
+@media (max-width:640px){.mk-quick{padding:0 16px}}
