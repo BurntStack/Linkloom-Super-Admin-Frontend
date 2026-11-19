@@ -81,6 +81,7 @@ function linkOf(n) {
   if (!id) return '';
   if (/verif|kyc/.test(t)) return '#verify-' + id;
   if (/campaign/.test(t)) return '#campaign-' + id;
+  if (/ticket|support/.test(t)) return '#ticket-' + id;
   if (/dispute/.test(t)) return '#dispute-' + id;
   if (/order|escrow/.test(t)) return '#order-' + id;
   if (/report|abuse/.test(t)) return '#report-' + id;

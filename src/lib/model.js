@@ -254,11 +254,12 @@ const ALABEL = {
   'bids.freeze': 'Froze bids', 'bids.dismiss': 'Dismissed a bid alert', 'review.delete': 'Deleted a review', 'review.keep': 'Kept a review',
   'featured.reorder': 'Reordered featured creators', 'category.add': 'Added a category', 'category.rename': 'Renamed a category', 'category.merge': 'Merged categories',
   'escrow.force_release': 'Force-released escrow', 'escrow.refund': 'Refunded escrow', 'dispute.resolve': 'Resolved a dispute',
+  'support.reply': 'Replied to a support ticket', 'support.note': 'Added a support note', 'support.assign': 'Assigned a support ticket', 'support.resolve': 'Resolved a support ticket', 'support.close': 'Closed a support ticket', 'support.reopen': 'Reopened a support ticket', 'support.priority': 'Changed ticket priority',
   'payouts.export': 'Exported payouts', 'audit.export': 'Exported the audit log', 'audit.verify': 'Verified the chain'
 };
 const AGROUP = { auth: 'Sign-in', session: 'Sessions', mfa: 'Sessions', account: 'Accounts', creator: 'Accounts', brand: 'Accounts', verification: 'Verification', report: 'Moderation',
   review: 'Marketplace', campaign: 'Marketplace', marketplace: 'Marketplace', bids: 'Marketplace', featured: 'Marketplace', category: 'Marketplace',
-  order: 'Orders and escrow', dispute: 'Orders and escrow', escrow: 'Orders and escrow', payouts: 'Financials', finance: 'Financials', audit: 'Audit log' };
+  order: 'Orders and escrow', dispute: 'Orders and escrow', escrow: 'Orders and escrow', support: 'Support', ticket: 'Support', payouts: 'Financials', finance: 'Financials', audit: 'Audit log' };
 const human = a => { const t = String(a || '').split('.').pop().replace(/[_-]/g, ' '); return t.charAt(0).toUpperCase() + t.slice(1); };
 export const auditLabel = a => ALABEL[a] || human(a);
 export const auditGroup = a => AGROUP[String(a).split('.')[0]] || 'Other';

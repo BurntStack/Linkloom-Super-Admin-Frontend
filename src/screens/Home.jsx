@@ -39,7 +39,7 @@ function greeting(now) {
 
 /* everything the screen reads, in one go; parts the role cannot see come back null */
 async function loadAll() {
-  const [dash, pipe, ver, rep, dis, bids, aud, chain, rules] = await Promise.all([
+  const [dash, pipe, ver, rep, dis, bids, aud, chain, rules, tix] = await Promise.all([
     ok(api.dashboard()), can('finance') ? ok(api.pipeline()) : null,
     can('verify') ? rows(api.verifications({ status: 'pending' })) : null,
     can('moderation') ? rows(api.reports({ status: 'open' })) : null,
@@ -47,7 +47,8 @@ async function loadAll() {
     can('moderation') ? rows(api.bidAlerts({ status: 'open' })) : null,
     can('audit') ? ok(api.auditLog({})) : null,
     can('audit') ? ok(api.verifyAudit()) : null,
-    can('finance') ? ok(api.rules()) : null
+    can('finance') ? ok(api.rules()) : null,
+    can('support') ? rows(api.supportTickets({ status: 'open' })) : null
   ]);
   if (dash) setEscrow(dash);
   const d = toDashboard(dash);
@@ -62,7 +63,8 @@ async function loadAll() {
   return {
     d, gatewayPct: pick(d.gatewayPct, num(pick(r.gatewayPct, r.gatewayPercent, r.gateway_pct))), commissionPct: pick(d.commissionPct, num(pick(r.commissionPct, r.commissionPercent))),
     pend: ver && ver.map(toVerification), reps: rep && rep.map(toReport), disp: dis && dis.map(toDispute), bids: bids && bids.map(toBidAlert),
-    audit: aud ? aud.rows.map(toAudit) : null, chain
+    audit: aud ? aud.rows.map(toAudit) : null, chain,
+    tickets: tix && tix.map(t => ({ id: String(t.id), subject: t.subject || 'Support request', who: (t.user && (t.user.name || t.user.displayName || t.user.email)) || '', role: String((t.user && t.user.role) || t.role || '').toLowerCase(), priority: String(t.priority || 'normal').toLowerCase(), at: t.waitingSince || t.updatedAt || t.createdAt }))
   };
 }
 const chainOk = c => (c == null ? null : typeof c === 'boolean' ? c : c.valid ?? c.ok ?? c.intact ?? (typeof c.status === 'string' ? /ok|valid|intact/i.test(c.status) : null));
@@ -120,7 +122,8 @@ export default function Home() {
   const repOpen = (x.reps || []).filter(rp => rp.status === 'open').sort((a, b) => (b.severity === 'high') - (a.severity === 'high') || b.count - a.count);
   const dOpen = (x.disp || []).filter(dp => dp.status === 'open').sort((a, b) => (Date.parse(a.sla) || Infinity) - (Date.parse(b.sla) || Infinity));
   const al = alertsOf(x), alShown = u.afilter === 'all' ? al : al.filter(a => a.g === u.afilter);
-  const urgentN = (pend.length ? 1 : 0) + (repOpen.length ? 1 : 0) + (dOpen.length ? 1 : 0);
+  const tix = (x.tickets || []).sort((a, b) => (b.priority === 'urgent') - (a.priority === 'urgent') || (b.priority === 'high') - (a.priority === 'high') || (Date.parse(a.at) || 0) - (Date.parse(b.at) || 0));
+  const urgentN = (pend.length ? 1 : 0) + (repOpen.length ? 1 : 0) + (dOpen.length ? 1 : 0) + (tix.length ? 1 : 0);
   const cOk = chainOk(x.chain), cN = chainCount(x.chain);
   const gw = x.gatewayPct, cm = x.commissionPct == null ? 0 : x.commissionPct;
 
@@ -156,6 +159,16 @@ export default function Home() {
       <p className="home-disp-s"><span className="pill pill-escrow"><Icon n="lock" />Held in escrow</span><span>{o.title}</span></p>
       <div className="home-obj-act"><Lq as="a" className="lq-p lq-sm" href={`#dispute-${dp.id}`}>Arbitrate</Lq>{dOpen.length > 1 ? <a className="btn-q" href="#orders-disputes">+{dOpen.length - 1} more open</a> : null}</div>
       <p className="home-disp-f">Force release or refund, each with a reason on record.</p>
+    </li>);
+  }
+
+  if (tix.length) {
+    objs.push(<li className="home-obj home-rep" key="sup">
+      <div className="home-obj-top"><span className="pill pill-info"><Icon n="chat" />{plural(tix.length, 'open ticket')}</span>{tix.some(t => t.priority === 'urgent' || t.priority === 'high') ? <span className="home-due"><Icon n="alert" />{tix.filter(t => t.priority === 'urgent' || t.priority === 'high').length} high priority</span> : null}</div>
+      <ul className="home-rl">{tix.slice(0, 3).map(t => <li key={t.id}><a className="home-rl-a" href={`#ticket-${t.id}`}>
+        <span className={`home-sev is-${t.priority === 'urgent' || t.priority === 'high' ? 'high' : t.priority === 'low' ? 'low' : 'medium'}`}><i></i><i></i><i></i><span className="sr-only">{t.priority} priority</span></span>
+        <span className="home-rl-t"><span className="home-rl-k">{[t.role, t.who].filter(Boolean).join(' · ')}{t.at ? ' · ' + L.ago(t.at) : ''}</span><b>{t.subject}</b></span></a></li>)}</ul>
+      <div className="home-obj-act"><Lq as="a" className="lq-p lq-sm" href="#support">Open support</Lq></div>
     </li>);
   }
 

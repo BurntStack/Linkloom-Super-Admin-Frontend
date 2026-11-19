@@ -78,3 +78,14 @@ Each item: `id, title, body, kind (verify|report|dispute|bids|payment|campaign|a
 ## 8. Audit log
 - Entries: `id, createdAt, actor { name }, action (e.g. account.suspend), targetType, targetId, target (label), reason, prevHash, hash`.
 - `audit-log/verify/` returns `{ valid, count, brokenAt }`.
+
+## 9. Support tickets — `/v1/admin/support/tickets/` (not built yet; the screen says "not connected" until it is)
+- List filters: `status (open|waiting_on_user|resolved|closed), topic, role (creator|brand), priority, assignee (me|<adminId>|none), q`.
+- Ticket: `id, number (shown as LL-<number>), topic (payments|deal|account|marketplace|bug|other), subject, status, priority (low|normal|high|urgent),
+  user { id, name, email, role, profileId, accountStatus }, order { id, title, status, amount } (optional), assignee { id, name },
+  waitingSince, createdAt, updatedAt, lastMessage { text }`.
+- Detail also: `messages [{ id, author (user|admin|system), adminName, internal, text, createdAt, attachments [{ uploadId, fileName }] }]` — internal notes only for admins.
+- Writes: `reply/ { text }` (status → waiting_on_user, user notified) · `notes/ { text }` · `assign/ { adminId | "me" | null }` · `PATCH { priority?, status? }`.
+- Every write goes in the audit log as `support.reply|note|assign|priority|resolve|close|reopen`.
+- `GET /v1/admin/system/counts/` should include `support: { open }` (sidebar badge); notifications for new tickets use `targetType: "support_ticket", targetId`.
+- Attachments open through `GET /v1/uploads/<id>/download-url/`, which must allow admins.

@@ -10,10 +10,10 @@ import { errText } from './Admin.jsx';
 import Icon from './Icon.jsx';
 
 const KIND = { verify: ['verified', 'Verification', 'plain'], report: ['flag', 'Report', 'err'], dispute: ['lock', 'Dispute', 'escrow'], bids: ['bids', 'Bid pattern', 'warn'],
-  payment: ['coin', 'Payment', 'escrow'], campaign: ['brief', 'Campaign', 'plain'], audit: ['shield', 'Audit', 'plain'] };
+  payment: ['coin', 'Payment', 'escrow'], campaign: ['brief', 'Campaign', 'plain'], support: ['chat', 'Support', 'plain'], audit: ['shield', 'Audit', 'plain'] };
 const kindOf = n => {
   const k = `${n.kind} ${n.link} ${n.text}`.toLowerCase();
-  const key = /verif|kyc/.test(k) ? 'verify' : /report|abuse|flag/.test(k) ? 'report' : /dispute/.test(k) ? 'dispute' : /bid/.test(k) ? 'bids' : /pay|refund|escrow|order/.test(k) ? 'payment' : /campaign|brief/.test(k) ? 'campaign' : /audit|chain/.test(k) ? 'audit' : '';
+  const key = /ticket|support/.test(k) ? 'support' : /verif|kyc/.test(k) ? 'verify' : /report|abuse|flag/.test(k) ? 'report' : /dispute/.test(k) ? 'dispute' : /bid/.test(k) ? 'bids' : /pay|refund|escrow|order/.test(k) ? 'payment' : /campaign|brief/.test(k) ? 'campaign' : /audit|chain/.test(k) ? 'audit' : '';
   return KIND[key] || ['bell', 'Update', 'plain'];
 };
 const groupOf = at => { const t = Date.parse(at); if (!Number.isFinite(t)) return 'Earlier'; const d = Math.floor((Date.now() + 19800000) / 864e5) - Math.floor((t + 19800000) / 864e5); return d <= 0 ? 'Today' : d === 1 ? 'Yesterday' : 'Earlier'; };
