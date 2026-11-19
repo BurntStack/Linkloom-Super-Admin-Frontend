@@ -63,6 +63,15 @@ export const api = {
   payouts: (q, cursor) => page(`${A}/finance/payouts/`, { query: q, cursor }),
   exportPayouts: q => download(`${A}/finance/payouts/export/`, { query: q, filename: 'linkloom-payouts.csv' }),
 
+  /* H. support tickets from brands and creators (see the "Support tickets: backend implementation list") */
+  supportTickets: (q, cursor) => page(`${A}/support/tickets/`, { query: q, cursor }),
+  supportTicket: id => get(`${A}/support/tickets/${e(id)}/`),
+  supportReply: (id, body) => post(`${A}/support/tickets/${e(id)}/reply/`, body),
+  supportNote: (id, body) => post(`${A}/support/tickets/${e(id)}/notes/`, body),
+  supportAssign: (id, adminId) => post(`${A}/support/tickets/${e(id)}/assign/`, { adminId }),
+  supportUpdate: (id, body) => patch(`${A}/support/tickets/${e(id)}/`, body),
+  fileUrl: uploadId => get(`/v1/uploads/${e(uploadId)}/download-url/`),
+
   /* G. system */
   dashboard: () => get(`${A}/system/dashboard/`),
   counts: () => get(`${A}/system/counts/`),
@@ -90,7 +99,9 @@ const AREAS = {
   finance: ['super_admin', 'finance'],                 // reading orders, disputes, summaries, payouts
   disputes: ['super_admin'],                           // resolving a dispute
   money: ['super_admin'],                              // force-release and refund
-  audit: ['super_admin']
+  audit: ['super_admin'],
+  support: ['super_admin', 'trust_safety', 'finance'],   // reading and replying to support tickets
+  supportClose: ['super_admin', 'trust_safety']          // resolving, closing, priority, assigning
 };
 /* may the signed-in admin do this? Unknown role (older tokens): let the backend decide. */
 export const can = area => { const r = role(); return !r || !AREAS[area] || AREAS[area].includes(r); };

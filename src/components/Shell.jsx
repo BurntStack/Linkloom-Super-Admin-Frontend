@@ -21,6 +21,7 @@ export function Sidebar({ nav }) {
           <a href="#accounts" data-nav="accounts" {...cur(nav, 'accounts')}>Accounts</a>
           <a href="#marketplace" data-nav="marketplace" {...cur(nav, 'marketplace')}>Marketplace <Badge n={c.campaigns} /></a>
           <a href="#moderation" data-nav="moderation" {...cur(nav, 'moderation')}>Moderation <Badge n={c.moderation} /></a>
+          <a href="#support" data-nav="support" {...cur(nav, 'support')}>Support <Badge n={c.support} /></a>
           <a href="#orders" data-nav="orders" {...cur(nav, 'orders')}>Orders &amp; escrow <Badge n={c.orders} /></a>
           <a href="#finance" data-nav="finance" {...cur(nav, 'finance')}>Financials</a>
           <a href="#audit" data-nav="audit" {...cur(nav, 'audit')}>Audit log</a>

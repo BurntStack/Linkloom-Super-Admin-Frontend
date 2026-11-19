@@ -7,5 +7,6 @@ import './Verify.jsx';
 import './Accounts.jsx';
 import './Marketplace.jsx';
 import './Moderation.jsx';
+import './Support.jsx';
 import './Orders.jsx';
 import './Finance.jsx';

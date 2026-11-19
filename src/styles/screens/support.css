@@ -1,0 +1,20 @@
+/* Support (#support, #ticket-<id>) */
+.sup-filters { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 10px; }
+.sup-conv { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+.sup-msg { display: grid; gap: 6px; max-width: 86%; padding: 12px 14px; border-radius: 16px 16px 16px 6px; border: 1px solid var(--line, #e4e4e4); background: var(--card, #fff); }
+.sup-msg.is-admin { justify-self: end; border-radius: 16px 16px 6px 16px; background: #121212; color: #fff; border-color: #121212; }
+.sup-msg.is-admin .muted { color: rgba(255, 255, 255, 0.7); }
+.sup-msg.is-note { justify-self: end; background: #fff7d6; color: #3d3200; border: 1px dashed #c9a400; }
+.sup-msg.is-note .muted { color: #6b5a00; }
+.sup-msg-h { display: flex; justify-content: space-between; gap: 12px; margin: 0; font-size: 13px; }
+.sup-msg-t { margin: 0; white-space: pre-line; overflow-wrap: anywhere; line-height: 1.5; }
+.sup-files { display: flex; flex-wrap: wrap; gap: 6px; }
+.sup-file { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 999px; border: 1px solid currentColor; background: transparent; color: inherit; font: inherit; font-size: 13px; cursor: pointer; }
+.sup-file svg { width: 14px; height: 14px; }
+.sup-sys { text-align: center; font-size: 13px; color: var(--muted, #666); }
+.sup-compose { display: grid; gap: 10px; }
+.sup-compose textarea { min-height: 110px; resize: vertical; }
+.sup-compose.is-note textarea { background: #fffbea; border-color: #c9a400; }
+.sup-acts { flex-wrap: wrap; }
+.sup-field { display: grid; gap: 6px; margin-top: 14px; }
+.sup-assign { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }

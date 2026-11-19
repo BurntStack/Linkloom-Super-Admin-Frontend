@@ -61,7 +61,7 @@ const setBadges = f => { badgeFns = f; };
 const chrome = () => {
   const lv = LLD_DATA.live || {}, c = lv.counts || {}, b = badgeFns || {};
   const n = k => (b[k] ? b[k](c) || 0 : 0);
-  return { verify: n('verify'), campaigns: n('campaigns'), moderation: n('moderation'), orders: n('orders'), bell: lv.unread || 0 };
+  return { verify: n('verify'), campaigns: n('campaigns'), moderation: n('moderation'), orders: n('orders'), support: n('support'), bell: lv.unread || 0 };
 };
 
 /* one letter, like the creator app: a two-letter avatar such as "AI" reads as an AI button */

@@ -11,6 +11,7 @@ import './styles/screens/verify.css';
 import './styles/screens/accounts.css';
 import './styles/screens/marketplace.css';
 import './styles/screens/moderation.css';
+import './styles/screens/support.css';
 import './styles/screens/orders.css';
 import './styles/screens/finance.css';
 import './styles/screens/admin.css';

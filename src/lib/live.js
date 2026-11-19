@@ -30,6 +30,7 @@ export const BADGES = {
   campaigns: c => countOf(c, /campaign/i),
   moderation: c => countOf(c, /abuse|report/i) + countOf(c, /bid.?alert/i) + countOf(c, /review/i),
   orders: c => countOf(c, /dispute/i),
+  support: c => countOf(c, /support|ticket/i),
   bell: c => countOf(c, /notification|unread/i)
 };
 
