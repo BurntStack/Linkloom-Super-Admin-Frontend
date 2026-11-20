@@ -15,7 +15,7 @@ import { useRerender } from '../lib/hooks.js';
 import { api, can, num, pick, str } from '../lib/admin.js';
 import { refreshCounts } from '../lib/live.js';
 import { toVerification, toCreator, toBrand } from '../lib/model.js';
-import Av from '../components/Av.jsx';
+import Av, { photoOf } from '../components/Av.jsx';
 import Icon from '../components/Icon.jsx';
 import Lq from '../components/Lq.jsx';
 import { confirm } from '../components/Confirm.jsx';
@@ -111,7 +111,7 @@ function Row({ v }) {
   return (
     <li className={'vfy-row' + (!pending ? ' is-done' : '')} data-kind={v.kind}>
       <a className="vfy-row-a" href={`#verify-${v.id}`} aria-label={`${v.name}, ${v.kind}. ${pending ? sl.t : (STATUS[v.status] || STATUS.pending)[2]}. Open`}>
-        <Av kind={v.kind} name={v.name} />
+        <Av kind={v.kind} name={v.name} src={photoOf(v.raw) || photoOf(v.raw && (v.raw.creator || v.raw.brand || v.raw.profile))} />
         <span className="vfy-row-id"><b>{v.name}</b><span><Kind k={v.kind} /><span className="num">{v.submitted ? `Sent ${L.ago(v.submitted)}` : v.email}</span></span></span>
         <ul className="vfy-sigs" aria-label="Checks">{c.filter(x => !x.api).map(x => <Sig c={x} key={x.k} />)}</ul>
         <span className="vfy-row-flag">{!pending ? <Pill st={v.status} /> : pr.length ? <span className="vfy-flag"><Icon n="alert" />{pr[0].h.replace(/:.*/, '')}</span> : bad ? <span className="vfy-flag"><Icon n="alert" />{`${bad} check${bad > 1 ? 's' : ''} failed`}</span> : <span className="vfy-clear"><Icon n="check" />All checks clear</span>}</span>
@@ -286,7 +286,7 @@ function Detail({ id }) {
     <div className="view-in vfy vfy-d" ref={root}>
       {back}
       <header className="vfy-mast">
-        <Av kind={v.kind} name={v.name} cls="vfy-av" />
+        <Av kind={v.kind} name={v.name} cls="vfy-av" src={photoOf(v.raw) || photoOf(v.raw && (v.raw.creator || v.raw.brand || v.raw.profile))} />
         <div className="vfy-mast-t">
           <p className="vfy-mast-k"><Kind k={v.kind} /><span>{v.kind === 'brand' ? 'Brand verification' : 'Creator KYC'}</span>{accHref ? <a className="btn-q" href={accHref}>View account</a> : <span>No account yet</span>}</p>
           <h1 className="t-h1">{v.name}</h1>

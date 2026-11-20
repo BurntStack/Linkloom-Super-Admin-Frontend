@@ -16,7 +16,7 @@ import { useRerender } from '../lib/hooks.js';
 import { api, can, whoCan, str, pick, num, arr } from '../lib/admin.js';
 import { toCreator, toBrand, toReport, toOrder, toCampaign, toAudit, toSession, toCategory, toVerification, auditLabel } from '../lib/model.js';
 import { mailMask, mask, freeMail, gstState } from './Verify.jsx';
-import Av from '../components/Av.jsx';
+import Av, { photoOf } from '../components/Av.jsx';
 import Icon from '../components/Icon.jsx';
 import Lq from '../components/Lq.jsx';
 import { confirm, LogLine } from '../components/Confirm.jsx';
@@ -92,7 +92,7 @@ function List() {
 }
 const CRow = ({ c }) => (
   <li><a className="acc-row" href={`#creator-${c.id}`}>
-    <Av kind="creator" name={c.name} />
+    <Av kind="creator" name={c.name} src={photoOf(c.raw)} />
     <span className="acc-id"><b>{c.name}</b><span>{[c.handle, c.city || c.email].filter(Boolean).join(' · ')}</span></span>
     <span className="acc-tags">{c.badges.map(b => <span className="acc-badge" key={b}><Icon n="verified" />{b}</span>)}{c.tags.slice(0, 2).map(t => <span className="pill pill-line" key={t}>{t}</span>)}{c.featured ? <span className="acc-feat"><Icon n="star" />Featured</span> : null}</span>
     <span className="acc-n"><b className="t-money">{c.followers ? L.compact(c.followers) : '—'}</b><span>followers</span></span>
@@ -103,7 +103,7 @@ const BRow = ({ b }) => {
   const mailOk = b.mailVerified !== false && !freeMail(b.email);
   return (
     <li><a className="acc-row" href={`#brand-${b.id}`}>
-      <Av kind="brand" name={b.name} />
+      <Av kind="brand" name={b.name} src={photoOf(b.raw)} />
       <span className="acc-id"><b>{b.name}</b><span>{[b.contact, b.city].filter(Boolean).join(' · ')}</span></span>
       <span className="acc-tags">{b.email ? <span className={'acc-mail' + (mailOk ? '' : ' is-bad')}><Icon n={mailOk ? 'check' : 'alert'} />{b.email}</span> : null}</span>
       <span className="acc-n"><b className="t-money">{b.postsLast30 != null ? b.postsLast30 : '—'}</b><span>posts in 30 days</span></span>
@@ -222,7 +222,7 @@ function CreatorView({ id }) {
     <div className="view-in acc acc-d" ref={root}>
       {back}
       <header className="acc-mast">
-        <Av kind="creator" name={c.name} cls="acc-av" />
+        <Av kind="creator" name={c.name} cls="acc-av" src={photoOf(c.raw)} />
         <div className="acc-mast-t"><p className="acc-kind acc-kind--c"><i className="dot"></i>{['Creator', c.city, c.joined && 'joined ' + L.fmtDate(c.joined, { year: true })].filter(Boolean).join(' · ')}</p>
           <h1 className="t-h1">{c.name}</h1>
           <p className="acc-mast-m">{c.handle ? <span className="acc-handle">{c.handle}</span> : <span className="muted">No handle yet</span>}<KycPill k={c.kyc} />{v ? <a className="btn-q" href={`#verify-${v.id}`}>Open KYC request</a> : null}</p></div>
@@ -355,7 +355,7 @@ function BrandView({ id }) {
     <div className="view-in acc acc-d" ref={root}>
       {back}
       <header className="acc-mast">
-        <Av kind="brand" name={b.name} cls="acc-av" />
+        <Av kind="brand" name={b.name} cls="acc-av" src={photoOf(b.raw)} />
         <div className="acc-mast-t"><p className="acc-kind acc-kind--b"><i className="dot"></i>{['Brand', b.city, b.joined && 'joined ' + L.fmtDate(b.joined, { year: true })].filter(Boolean).join(' · ')}</p>
           <h1 className="t-h1">{b.name}</h1>
           <p className="acc-mast-m"><span>{b.contact}</span><KycPill k={b.verify} />{v ? <a className="btn-q" href={`#verify-${v.id}`}>Open verification request</a> : null}</p></div>

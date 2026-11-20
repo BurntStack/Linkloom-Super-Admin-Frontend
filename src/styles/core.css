@@ -243,6 +243,7 @@ img{display:block;max-width:100%}
 .avatar.lg{width:88px;height:88px;font-size:28px}
 .avatar.lg[data-me-initials]{font-size:44px}
 .avatar.v{background:var(--ll-violet)} .avatar.b{background:var(--ll-butter)}
+.av-ph{display:block;width:100%;height:100%;object-fit:cover;border-radius:inherit} /* a photo or logo inside an avatar (components/Av.jsx) */
 .skip{position:fixed;left:12px;top:-60px;z-index:100;padding:10px 16px;border-radius:var(--r-full);background:var(--ll-ink-text);color:#fff;font-weight:600;font-size:14px}
 .skip:focus-visible{top:calc(12px + env(safe-area-inset-top,0px))}
 

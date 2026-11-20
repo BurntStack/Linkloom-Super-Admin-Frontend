@@ -9,6 +9,7 @@ import { can, whoCan, role, ROLE_NAME, isMoneyKey, isDateKey, label, str, nameOf
 import { paise } from '../lib/api.js';
 import Icon from './Icon.jsx';
 import Lq from './Lq.jsx';
+import { Photo } from './Av.jsx';
 
 /* ---------- errors, in words an admin can act on ---------- */
 export function errText(e) {
@@ -160,9 +161,9 @@ export function Status({ s, text }) {
 }
 
 /* a list row: link or button, title, subtitle, right side */
-export function Row({ href, onClick, kind, title, sub, right, pills }) {
+export function Row({ href, onClick, kind, title, sub, right, pills, photo = '' }) {
   const inner = <>
-    {kind ? <span className={`avatar ${kind === 'brand' ? 'v' : ''} adm-av`} aria-hidden="true">{L.initials(title)}</span> : null}
+    {kind ? <span className={`avatar ${kind === 'brand' ? 'v' : ''} adm-av`} aria-hidden="true"><Photo src={photo}>{L.initials(title)}</Photo></span> : null}
     <span className="adm-row-t"><b>{title}</b>{sub ? <span>{sub}</span> : null}</span>
     {pills ? <span className="adm-row-p">{pills}</span> : null}
     {right != null ? <span className="adm-row-r">{right}</span> : null}
