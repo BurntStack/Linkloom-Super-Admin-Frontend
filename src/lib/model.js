@@ -160,7 +160,7 @@ export function toVerification(src, acc = null) {
   const k = obj(v.kyc) || v, steps = obj(k.steps) || {};
   const sec = keys => findSection(v, keys) || findSection(A, keys);
   /* loose fields sitting straight on the record or its kyc part; the request's own values win */
-  const F = Object.assign({}, ...[A && obj(A.user), A, A && obj(A.kyc), obj(v.profile), obj(v.user), obj(v.creator), v, obj(v.kyc)].filter(Boolean).map(clean));
+  const F = Object.assign({}, ...[A && obj(A.user), A, A && obj(A.kyc), obj(v.profile), obj(v.user), obj(v.creator), obj(v.brand), v, obj(v.kyc)].filter(Boolean).map(clean));
   const idS = { ...clean({ idType: F.idType, idNumber: pick(F.idNumber, F.aadhaarNumber, F.documentNumber), last4: pick(F.idLast4, F.aadhaarLast4), name: F.nameOnId, dob: pick(F.dob, F.dateOfBirth, F.birthDate) }),
     ...clean(sec(['idDoc', 'idDocument', 'identity', 'identityDocument', 'id', 'idProof', 'governmentId', 'aadhaar', 'aadhar', 'kycDocument'])) };
   const panS = { ...clean({ pan: sv(F.pan), panNumber: F.panNumber, panMasked: F.panMasked, panLast4: F.panLast4, name: pick(F.nameOnPan, F.panName, F.panHolderName) }),
@@ -181,7 +181,21 @@ export function toVerification(src, acc = null) {
     masked: str(pick(bank.masked, bank.accountMasked, bank.upiMasked, bank.accountLast4 && '••••' + bank.accountLast4, bank.last4 && '••••' + bank.last4, maskId(pick(bank.accountNumber, bank.accountNo, bank.number)), upi)),
     holder: str(pick(bank.holder, bank.accountHolderName, bank.accountHolder, bank.nameAtBank, bank.holderName, bank.beneficiaryName, bank.accountName)),
     ifsc: str(pick(bank.ifsc, bank.ifscCode)), bankName: str(bank.bankName), match: MATCH(pick(bank.match, bank.nameMatch, bank.pennyDrop, bank.verified === true ? 'ok' : '')), done: done(bank) };
-  const biz = obj(v.business) || obj(v.company), per = obj(v.person) || obj(v.signatory) || obj(v.authorisedPerson), bill = obj(v.billing);
+  /* brand: business, authorised person and billing, from the request or the brand's account record, nested or flat */
+  const biz = { ...clean({ legal: pick(F.legalName, F.registeredName, F.companyName, F.businessName), gstin: pick(F.gstin, F.gstNumber, F.gstNo), gstinStatus: pick(F.gstinStatus, F.gstStatus),
+    pan: pick(F.companyPan, F.businessPan, sv(F.pan), F.panNumber), cin: pick(F.cin, F.llpin, F.cinNumber), panFromGstin: F.panFromGstin }),
+    ...clean(sec(['business', 'company', 'businessDetails', 'companyDetails', 'brandDetails', 'businessInfo', 'companyInfo', 'brandInfo', 'kyb', 'kybDetails', 'organisation', 'organization', 'gst', 'gstDetails'])) };
+  const per = { ...clean({ name: pick(F.contactName, F.contactPerson, F.authorisedPersonName, F.authorizedPersonName, F.signatoryName), designation: pick(F.designation, F.contactDesignation, F.jobTitle),
+    mail: pick(F.businessEmail, F.workEmail, F.contactEmail), mailVerified: bool(F.businessEmailVerified, F.mailVerified) }),
+    ...clean(sec(['person', 'signatory', 'authorisedPerson', 'authorizedPerson', 'contactPerson', 'authorisedSignatory', 'authorizedSignatory'])) };
+  const addr = a => (obj(a) ? [a.line1, a.line2, a.city, a.state, pick(a.pincode, a.postalCode, a.zip)].filter(Boolean).join(', ') : sv(a));
+  const bill = { ...clean({ address: pick(addr(F.billingAddress), addr(F.registeredAddress), addr(F.address)), email: pick(F.billingEmail, F.accountsEmail, F.invoiceEmail) }),
+    ...clean(sec(['billing', 'billingDetails', 'invoicing'])) };
+  const BZ = { legal: str(pick(biz.legal, biz.legalName, biz.registeredName, biz.companyName, biz.businessName)), gstin: str(pick(biz.gstin, biz.gstNumber, biz.gstNo)).toUpperCase(),
+    gstinStatus: str(pick(biz.gstinStatus, biz.gstStatus)), pan: str(pick(biz.pan, biz.panMasked, biz.companyPan, biz.panNumber)).toUpperCase(),
+    panFromGstin: !!pick(biz.panFromGstin, biz.panMatchesGstin), cin: str(pick(biz.cin, biz.llpin, biz.cinNumber)).toUpperCase() };
+  const PR = { name: str(pick(per.name, per.fullName)), designation: str(pick(per.designation, per.title, per.role)), mail: str(pick(per.mail, per.email, per.workEmail)), mailVerified: bool(per.mailVerified, per.emailVerified, per.isEmailVerified) };
+  const BL = { address: str(pick(addr(bill.address), bill.line1 && addr(bill), sv(bill.billingAddress))), email: str(pick(bill.email, bill.billingEmail, bill.accountsEmail)) };
   const kind = /brand/.test(lc(pick(v.kind, v.accountType, v.role, u.role, v.brand ? 'brand' : ''))) ? 'brand' : 'creator';
   const raw = lc(pick(v.status, k.status, v.kycStatus));
   return {
@@ -196,9 +210,9 @@ export function toVerification(src, acc = null) {
     bank: has(B, 'masked', 'holder', 'ifsc', 'done') ? B : null,
     selfie: sf ? { liveness: lc(pick(sf.liveness, sf.livenessStatus, sf.livenessResult)), faceMatch: num(pick(sf.faceMatch, sf.faceMatchScore, sf.matchScore, sf.score)) } : null,
     socials: arr(pick(v.socials, v.socialAccounts, k.socials, steps.socials, A && A.socials, A && A.socialAccounts)).filter(obj).map(s => ({ p: lc(pick(s.p, s.platform)), handle: str(pick(s.handle, s.username)), followers: num(pick(s.followers, s.followerCount)), linked: !!pick(s.linked, s.verified, s.isLinked), age: str(pick(s.age, s.accountAge)) })),
-    business: biz ? { legal: str(pick(biz.legal, biz.legalName)), gstin: str(biz.gstin), gstinStatus: str(pick(biz.gstinStatus, biz.gstStatus)), pan: str(pick(biz.pan, biz.panMasked)), panFromGstin: !!pick(biz.panFromGstin, biz.panMatchesGstin), cin: str(biz.cin) } : null,
-    person: per ? { name: str(pick(per.name, per.fullName)), designation: str(pick(per.designation, per.title, per.role)), mail: str(pick(per.mail, per.email)), mailVerified: bool(per.mailVerified, per.emailVerified) } : null,
-    billing: bill ? { address: str(pick(bill.address, bill.line1)), email: str(pick(bill.email, bill.billingEmail)) } : null,
+    business: has(BZ, 'legal', 'gstin', 'pan', 'cin') ? BZ : null,
+    person: has(PR, 'name', 'designation', 'mail') || PR.mailVerified != null ? PR : null,
+    billing: has(BL, 'address', 'email') ? BL : null,
     checks: arr(v.checks), docs: arr(pick(v.documents, v.docs, v.files)).filter(obj).map((d, i) => ({ key: str(pick(d.id, d.key, i)), name: str(pick(d.label, d.name, d.type, d.kind, 'Document')), url: str(pick(d.url, d.downloadUrl, d.signedUrl)), expiresAt: str(d.expiresAt), uploadId: str(pick(d.uploadId, d.fileId)) })).filter(d => d.url || !d.uploadId),
     /* uploaded files (ID, PAN, bank proof...) as { key, label, uploadId | url, selfie } */
     images: [...imagesIn(v, 'request'), ...(A ? imagesIn(obj(A.kyc) || A, 'account') : [])].filter((x, i, a) => a.findIndex(y => y.key === x.key) === i),

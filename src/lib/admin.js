@@ -92,6 +92,7 @@ export const ROLE_NAME = { super_admin: 'Super admin', trust_safety: 'Trust & sa
 export const role = () => (data.me && data.me.adminRole) || '';
 const AREAS = {
   verify: ['super_admin', 'trust_safety'],
+  verifyOverride: ['super_admin'],                     // approving past missing brand details, with a note
   campaigns: ['super_admin', 'trust_safety'],
   moderation: ['super_admin', 'trust_safety'],
   accounts: ['super_admin', 'trust_safety'],

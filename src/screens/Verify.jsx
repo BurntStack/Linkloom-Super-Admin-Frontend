@@ -90,8 +90,8 @@ function problems(v) {
     if (v.socials.some(x => !x.linked)) p.push({ block: false, h: 'Instagram not linked by login', d: 'Follower numbers are self-reported until they connect the account.' });
   } else {
     const b = v.business || {}, per = v.person || {}, mail = per.mail || v.email;
-    if (!b.gstin && !b.legal) p.push({ block: true, h: 'No business details at all', d: 'No legal name, GSTIN, PAN or CIN, and no named person. Ask for them, or reject if the account looks like a scam.' });
-    if (mail && (freeMail(mail) || per.mailVerified === false)) p.push({ block: true, h: 'Business mail is not a company address', d: `${mail} is ${freeMail(mail) ? 'a free mailbox' : 'not a company domain'}${per.mailVerified === false ? ' and is not verified' : ''}.` });
+    if (!b.gstin && !b.legal) p.push({ block: true, soft: true, h: 'No business details at all', d: 'No legal name, GSTIN, PAN or CIN, and no named person. Ask for them, or reject if the account looks like a scam.' });
+    if (mail && (freeMail(mail) || per.mailVerified === false)) p.push({ block: true, soft: true, h: 'Business mail is not a company address', d: `${mail} is ${freeMail(mail) ? 'a free mailbox' : 'not a company domain'}${per.mailVerified === false ? ' and is not verified' : ''}.` });
     const acc = v.raw.brand && typeof v.raw.brand === 'object' ? toBrand(v.raw.brand) : null;
     if (acc && acc.reports) p.push({ block: false, h: `${acc.reports} open reports on this brand`, d: `Its campaigns are reported in moderation.${acc.postsLast30 != null ? ` Posted ${acc.postsLast30} campaigns in the last 30 days.` : ''}`, go: '#brand-' + acc.id });
   }
@@ -286,7 +286,12 @@ function Detail({ id }) {
   if (r.err) return <div className="view-in">{r.err.status === 404 ? <div className="empty"><img src="assets/step-04-orbit.svg" width="160" height="117" alt="" /><p className="t-h2">No request with that link.</p><p className="muted">It may have been withdrawn by the applicant.</p><Lq as="a" className="lq-p" href="#verify">Back to the desk</Lq></div> : <>{back}<Failed err={r.err} retry={r.reload} what="This request" /></>}</div>;
   if (!v) return <div className="view-in">{back}<Loading what="this request" /></div>;
 
-  const c = checks(v), pr = problems(v), block = pr.some(x => x.block), sl = sla(v), pending = v.status === 'pending';
+  const c = checks(v), pr = problems(v), sl = sla(v), pending = v.status === 'pending';
+  /* hard blocks (under 18, payout to someone else, a backend check) stop approval; soft ones (missing brand details)
+     a Super admin can approve past, with a note in the audit log */
+  const hard = pr.filter(x => x.block && !x.soft), soft = pr.filter(x => x.block && x.soft);
+  const override = !hard.length && soft.length > 0 && can('verifyOverride');
+  const block = hard.length > 0 || (soft.length > 0 && !override);
   const clear = c.filter(x => x.ok === 'ok').length;
   const next = (nx.data || []).filter(x => x.status === 'pending' && x.id !== v.id).sort((a, b) => leftH(a) - leftH(b))[0];
   const first = v.kind === 'brand' ? (v.person && v.person.name && v.person.name !== '—' ? v.person.name.split(' ')[0] : 'there') : v.name.split(' ')[0];
@@ -297,7 +302,13 @@ function Detail({ id }) {
   const after = () => { refreshCounts(); r.reload(); nx.reload(); };
   const sum = <ul className="adm-sum">{c.map(x => <li className={`is-${x.ok}`} key={x.k}><Icon n={sigIc(x.ok)} /><b>{x.n}</b><span>{x.t}</span></li>)}</ul>;
 
-  const approve = () => confirm({
+  const softWhy = soft.map(x => x.h.replace(/:.*/, '').toLowerCase()).join('; ');
+  const approve = () => override ? confirm({
+    title: `Approve ${v.name} anyway`, cta: 'Approve anyway', danger: true,
+    lead: <p>{`Approving without: ${softWhy}. ${v.name} can post campaigns and fund escrow once approved. Say why in the note; it is kept in the audit log.`}</p>,
+    summary: sum, placeholder: 'For example: small business without GST, confirmed on a call', note: '',
+    run: ({ note }) => api.approveVerification(v.id, { note: `Approved past: ${softWhy}. ${note}` }), toast: 'Approved · Logged to audit', done: after
+  }) : confirm({
     title: `Approve ${v.name}`, cta: 'Approve and notify',
     lead: <p>{v.kind === 'creator' ? `${first} can bid and get paid once approved. Brands see a verified tick; KYC details stay private.` : `${v.name} can post campaigns and fund escrow once approved.`}</p>,
     summary: sum, placeholder: 'For example: all documents match',
@@ -348,12 +359,13 @@ function Detail({ id }) {
       <div className="vfy-cards">{v.kind === 'creator' ? <CreatorBody v={v} /> : <BrandBody v={v} />}<Images v={v} /><Docs v={v} reload={d => r.set(d)} /><AllFields v={v} /></div>
       {pending ? <div className="vfy-dock" role="region" aria-label="Decision">
         <p className="vfy-dock-t">{!can('verify') ? <><Icon n="lock" /><span>Deciding needs the Super admin or Trust &amp; safety role.</span></>
-          : block ? <><Icon n="alert" /><span>{`Approve is off: ${pr.find(x => x.block).h.replace(/:.*/, '').toLowerCase()}.`}</span></>
+          : block ? <><Icon n="alert" /><span>{`Approve is off: ${(hard[0] || soft[0]).h.replace(/:.*/, '').toLowerCase()}.${!hard.length ? ' Only a Super admin can approve past this.' : ''}`}</span></>
+          : override ? <><Icon n="alert" /><span>{`Missing: ${softWhy}. You can still approve as Super admin; say why in the note.`}</span></>
           : <><Icon n="shield" /><span>Your decision is logged and the applicant is told by SMS and email.</span></>}</p>
         <div className="vfy-dock-b">
           <Lq className="lq-s lq-sm" onClick={reject} disabled={!can('verify')}><Icon n="close" className="ic" />Reject</Lq>
           <Lq className="lq-s lq-sm" onClick={ask} disabled={!can('verify')}><Icon n="chat" className="ic" />Ask for more info</Lq>
-          <Lq className="lq-p lq-sm" onClick={approve} disabled={block || !can('verify')} aria-disabled={block || !can('verify') ? 'true' : undefined}><Icon n="check" className="ic" />Approve</Lq>
+          <Lq className="lq-p lq-sm" onClick={approve} disabled={block || !can('verify')} aria-disabled={block || !can('verify') ? 'true' : undefined}><Icon n="check" className="ic" />{override ? 'Approve anyway' : 'Approve'}</Lq>
         </div></div> : null}
     </div>
   );
