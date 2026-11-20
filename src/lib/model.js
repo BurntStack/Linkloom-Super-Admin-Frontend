@@ -62,13 +62,126 @@ export function toBrand(r) {
 /* ---------- verification desk ---------- */
 const VST = { pending: 'pending', under_review: 'pending', submitted: 'pending', in_review: 'pending', approved: 'approved', verified: 'approved',
   rejected: 'rejected', info_requested: 'info', action_needed: 'info', needs_info: 'info' };
+/* true when the object carries any of these fields with a real value */
+const has = (o, ...keys) => keys.some(x => o[x] != null && o[x] !== '' && o[x] !== false);
 const MATCH = s => { const v = lc(s); return !v ? '' : /under.?18|minor/.test(v) ? 'under18' : /mismatch|fail|no.?match|differ/.test(v) ? 'mismatch' : /ok|match|pass|valid|true/.test(v) ? 'ok' : v; };
-export function toVerification(v) {
-  if (!v) return null;
+/* snake_case keys read as camelCase, so id_doc and idDoc are the same field */
+const camel = k => k.replace(/[_-]+([a-z0-9])/gi, (_, c) => c.toUpperCase());
+const deepCamel = (v, d = 0) => (d > 8 ? v : Array.isArray(v) ? v.map(x => deepCamel(x, d + 1))
+  : obj(v) ? Object.fromEntries(Object.entries(v).map(([k, x]) => [camel(k), deepCamel(x, d + 1)])) : v);
+const clean = o => Object.fromEntries(Object.entries(o || {}).filter(([, x]) => x != null && x !== ''));
+const sv = x => (typeof x === 'string' || typeof x === 'number' ? String(x) : '');
+/* a full number shown with only its last 4 characters */
+const maskId = s => { s = sv(s).trim(); return !s || /[•*]|[xX]{3}/.test(s) || s.length <= 4 ? s : '•'.repeat(Math.min(8, s.length - 4)) + s.slice(-4); };
+const SKIP = new Set(['documents', 'docs', 'files', 'checks', 'history', 'adminHistory', 'auditTrail', 'orders', 'campaigns', 'reportList', 'abuseReports']);
+/* a step may keep its fields under data / details / value */
+const unwrap = o => (o ? { ...o, ...(obj(o.data) || {}), ...(obj(o.details) || {}), ...(obj(o.value) || {}) } : null);
+/* the first object stored under one of these keys anywhere in the record (breadth first), or a step tagged with one in a steps array */
+function findSection(root, keys) {
+  if (!root) return null;
+  const want = new Set(keys.map(k => k.toLowerCase()));
+  const q = [[root, 0]], seen = new Set();
+  while (q.length) {
+    const [o, d] = q.shift();
+    if (!o || typeof o !== 'object' || seen.has(o) || d > 5) continue;
+    seen.add(o);
+    if (Array.isArray(o)) {
+      for (const x of o) { if (obj(x) && want.has(lc(pick(x.key, x.step, x.type, x.kind)))) return unwrap(x); q.push([x, d + 1]); }
+      continue;
+    }
+    for (const [k, x] of Object.entries(o)) if (want.has(k.toLowerCase()) && obj(x)) return unwrap(x);
+    for (const [k, x] of Object.entries(o)) if (x && typeof x === 'object' && !SKIP.has(k)) q.push([x, d + 1]);
+  }
+  return null;
+}
+const IDT = { aadhaar: 'Aadhaar', aadhar: 'Aadhaar', passport: 'Passport', voter_id: 'Voter ID', voterid: 'Voter ID', driving_licence: 'Driving licence', driving_license: 'Driving licence', dl: 'Driving licence', pan: 'PAN' };
+const GENERIC = new Set(['kyc', 'steps', 'data', 'details', 'value', 'user', 'creator', 'brand', 'profile', 'account', 'verification', 'documents', 'docs', 'files', 'uploads']);
+const LABEL = { id: 'ID', iddoc: 'ID', iddocument: 'ID', identity: 'ID', idproof: 'ID', aadhaar: 'Aadhaar', aadhar: 'Aadhaar', pan: 'PAN', pancard: 'PAN card', bank: 'Bank proof', payout: 'Payout proof', selfie: 'Selfie', gst: 'GST certificate', gstin: 'GST certificate', cin: 'Incorporation certificate' };
+const words = s => s.replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase();
+const labelOf = parts => {
+  const p = parts.filter(x => x && !GENERIC.has(x.toLowerCase()) && !/^\d+$/.test(x));
+  const t = p.map(x => LABEL[x.toLowerCase()] || words(x)).join(' ').replace(/\b(upload|file|image|photo|url|id)s?\b$/i, '').trim();
+  const T = t.replace(/\b(pan|id|gst|gstin|ifsc|upi|cin)\b/gi, m => m.toUpperCase());
+  return T ? T[0].toUpperCase() + T.slice(1) : 'Uploaded file';
+};
+const IMGKEY = /(image|photo|picture|scan|front|back|proof|document|file|copy)(Url|Link)?$/i;
+const AVKEY = /avatar|logo|profile(pic|photo|image|picture)|^dp$|^(photo|image|picture)(url)?$/i;
+const looksUrl = s => /^(https?:\/\/|data:image\/|\/?(media|uploads?|static)\/)/i.test(s);
+/* every uploaded file the record points at: uploadId-style fields, or direct image links inside the KYC parts */
+function imagesIn(root, from) {
+  const out = [], ids = new Set(), seen = new Set();
+  const add = (x) => { const key = x.uploadId || x.url; if (!key || ids.has(key)) return; ids.add(key); out.push({ ...x, key, from, selfie: /selfie|face|liveness/i.test(x.path.join(' ')) }); };
+  const walk = (o, path, d) => {
+    if (!o || typeof o !== 'object' || seen.has(o) || d > 6) return;
+    seen.add(o);
+    if (Array.isArray(o)) { o.forEach((x, i) => walk(x, path.concat(obj(x) ? str(pick(x.label, x.key, x.step, x.type, x.name, i)) : String(i)), d + 1)); return; }
+    for (const [k, x] of Object.entries(o)) {
+      if (/uploadIds?$|fileIds?$/i.test(k)) {
+        const lab = k.replace(/(upload|file)Ids?$/i, '');
+        (Array.isArray(x) ? x : [x]).forEach((id, i, a) => { if (sv(id)) add({ uploadId: sv(id), path: path.concat(lab), label: labelOf(path.concat(lab)) + (a.length > 1 ? ` ${i + 1}` : '') }); });
+      } else if (typeof x === 'string' && IMGKEY.test(k) && !AVKEY.test(k) && looksUrl(x)) add({ url: x, path: path.concat(k), label: labelOf(path.concat(k.replace(/(Url|Link)$/i, ''))) });
+      else if (x && typeof x === 'object' && !/^(checks|history|adminHistory|auditTrail|orders|campaigns)$/.test(k)) {
+        /* a documents entry with its own link is already listed under Documents */
+        if (/^(documents|docs|files)$/.test(k)) { arr(x).forEach((dd, i) => { if (obj(dd) && !pick(dd.url, dd.downloadUrl, dd.signedUrl)) walk(dd, path.concat(str(pick(dd.label, dd.name, dd.type, dd.kind, i))), d + 1); }); continue; }
+        walk(x, path.concat(k), d + 1);
+      }
+    }
+  };
+  walk(root, [], 0);
+  return out;
+}
+/* every value the API sent, flattened to "path › field", for the "Everything the API sent" card; full numbers masked */
+const SENS = /(^pan$|panNumber|aadhaa?r|accountNumber|accountNo|bankAccount$|idNumber|documentNumber)/i;
+export function fieldsOf(src) {
+  const out = [], seen = new Set();
+  const walk = (o, path, d) => {
+    if (o == null || out.length >= 300 || d > 7) return;
+    if (typeof o !== 'object') {
+      const val = String(o); if (val === '') return;
+      const key = path[path.length - 1] || '';
+      out.push([path.map(words).join(' › '), SENS.test(key) && /\d/.test(val) ? maskId(val) : val]);
+      return;
+    }
+    if (seen.has(o)) return;
+    seen.add(o);
+    if (Array.isArray(o)) { o.forEach((x, i) => walk(x, path.concat(String(i + 1)), d + 1)); return; }
+    for (const [k, x] of Object.entries(o)) if (!/^(url|downloadUrl|signedUrl)$/.test(k)) walk(x, path.concat(k), d + 1);
+  };
+  walk(deepCamel(src), [], 0);
+  return out;
+}
+
+/* A verification request. `acc` is the applicant's account record (creator or brand), used where the request itself
+   does not carry the details, the photo or the uploads. */
+export function toVerification(src, acc = null) {
+  if (!src) return null;
+  const v = deepCamel(src), A = acc ? deepCamel(acc) : null;
   const u = obj(v.user) || obj(v.creator) || obj(v.brand) || obj(v.profile) || {};
   const k = obj(v.kyc) || v, steps = obj(k.steps) || {};
-  const idd = obj(v.id_doc) || obj(v.idDocument) || obj(steps.id) || {}, pan = obj(v.pan) || obj(steps.pan) || {}, bank = obj(v.bank) || obj(v.payout) || obj(steps.bank) || {};
-  const sf = obj(v.selfie) || obj(steps.selfie), biz = obj(v.business) || obj(v.company), per = obj(v.person) || obj(v.signatory) || obj(v.authorisedPerson), bill = obj(v.billing);
+  const sec = keys => findSection(v, keys) || findSection(A, keys);
+  /* loose fields sitting straight on the record or its kyc part; the request's own values win */
+  const F = Object.assign({}, ...[A && obj(A.user), A, A && obj(A.kyc), obj(v.profile), obj(v.user), obj(v.creator), v, obj(v.kyc)].filter(Boolean).map(clean));
+  const idS = { ...clean({ idType: F.idType, idNumber: pick(F.idNumber, F.aadhaarNumber, F.documentNumber), last4: pick(F.idLast4, F.aadhaarLast4), name: F.nameOnId, dob: pick(F.dob, F.dateOfBirth, F.birthDate) }),
+    ...clean(sec(['idDoc', 'idDocument', 'identity', 'identityDocument', 'id', 'idProof', 'governmentId', 'aadhaar', 'aadhar', 'kycDocument'])) };
+  const panS = { ...clean({ pan: sv(F.pan), panNumber: F.panNumber, panMasked: F.panMasked, panLast4: F.panLast4, name: pick(F.nameOnPan, F.panName, F.panHolderName) }),
+    ...clean(sec(['pan', 'panCard', 'panDetails'])) };
+  const bankS = { ...clean({ accountNumber: pick(F.accountNumber, F.bankAccountNumber, sv(F.bankAccount)), accountMasked: F.accountMasked, accountLast4: F.accountLast4, upiId: pick(F.upiId, sv(F.upi), F.vpa),
+    holder: pick(F.accountHolderName, F.accountHolder, F.bankHolderName, F.beneficiaryName), ifsc: pick(F.ifsc, F.ifscCode), bankName: F.bankName }),
+    ...clean(sec(['bank', 'payout', 'bankAccount', 'bankDetails', 'payoutAccount', 'payoutMethod', 'upi'])) };
+  const sf = sec(['selfie', 'liveness', 'faceVerification']);
+  const idd = idS, pan = panS, bank = bankS;
+  const done = o => !!pick(o.done, o.completed, o.isCompleted, o.submitted, o.isSubmitted);
+  const idType = lc(pick(idd.type, idd.idType, idd.documentType, idd.docType));
+  const I = { type: IDT[idType] || (/^(id|step)$/.test(idType) ? '' : idType.replace(/_/g, ' ')), masked: str(pick(idd.masked, idd.numberMasked, idd.last4 && '•••• ' + idd.last4, maskId(pick(idd.idNumber, idd.number, idd.documentNumber, idd.aadhaarNumber)))),
+    name: str(pick(idd.name, idd.nameOnId, idd.fullName)), dob: str(pick(idd.dob, idd.dateOfBirth, idd.birthDate)), match: MATCH(pick(idd.match, idd.nameMatch, idd.ageCheck)), uploadId: str(idd.uploadId), done: done(idd) };
+  const P = { masked: str(pick(pan.masked, pan.panMasked, pan.panLast4 && '••••••' + pan.panLast4, pan.last4 && '••••••' + pan.last4, maskId(pick(pan.panNumber, pan.number, sv(pan.pan), pan.value)))),
+    name: str(pick(pan.name, pan.nameOnPan, pan.panName, pan.holderName, pan.nameAsPerPan, pan.fullName)), match: MATCH(pick(pan.match, pan.nameMatch, pan.verified === true || pan.panVerified === true ? 'ok' : '')), done: done(pan) };
+  const upi = str(pick(bank.upiId, sv(bank.upi), bank.vpa));
+  const B = { kind: /upi/i.test(str(pick(bank.kind, bank.method, bank.mode, bank.type, upi && !pick(bank.accountNumber, bank.accountLast4, bank.accountMasked) ? 'UPI' : ''))) ? 'UPI' : 'Bank',
+    masked: str(pick(bank.masked, bank.accountMasked, bank.upiMasked, bank.accountLast4 && '••••' + bank.accountLast4, bank.last4 && '••••' + bank.last4, maskId(pick(bank.accountNumber, bank.accountNo, bank.number)), upi)),
+    holder: str(pick(bank.holder, bank.accountHolderName, bank.accountHolder, bank.nameAtBank, bank.holderName, bank.beneficiaryName, bank.accountName)),
+    ifsc: str(pick(bank.ifsc, bank.ifscCode)), bankName: str(bank.bankName), match: MATCH(pick(bank.match, bank.nameMatch, bank.pennyDrop, bank.verified === true ? 'ok' : '')), done: done(bank) };
+  const biz = obj(v.business) || obj(v.company), per = obj(v.person) || obj(v.signatory) || obj(v.authorisedPerson), bill = obj(v.billing);
   const kind = /brand/.test(lc(pick(v.kind, v.accountType, v.role, u.role, v.brand ? 'brand' : ''))) ? 'brand' : 'creator';
   const raw = lc(pick(v.status, k.status, v.kycStatus));
   return {
@@ -78,18 +191,18 @@ export function toVerification(v) {
     email: str(pick(v.email, u.email)), submitted: str(pick(v.submitted, v.submittedAt, k.submittedAt, v.createdAt)), slaDueAt: str(pick(v.slaDueAt, v.dueAt)),
     note: str(pick(v.note, v.adminNote)), reason: str(pick(v.rejectionReason, k.rejectionReason, v.reason)),
     decidedAt: str(pick(v.decidedAt, v.reviewedAt, v.verifiedAt)), decidedBy: nameOf(pick(v.decidedBy, v.reviewedBy)),
-    id_doc: (idd.type || idd.idType || idd.masked || idd.done) ? { type: str(pick(idd.type, idd.idType)).replace(/_/g, ' '), masked: str(pick(idd.masked, idd.numberMasked, idd.last4 && '•••• ' + idd.last4)),
-      name: str(pick(idd.name, idd.nameOnId)), dob: str(pick(idd.dob, idd.dateOfBirth)), match: MATCH(pick(idd.match, idd.nameMatch, idd.ageCheck)), uploadId: str(idd.uploadId), done: !!idd.done } : null,
-    pan: (pan.masked || pan.panLast4 || pan.done || pan.name) ? { masked: str(pick(pan.masked, pan.panMasked, pan.panLast4 && '••••••' + pan.panLast4)), name: str(pick(pan.name, pan.nameOnPan)), match: MATCH(pick(pan.match, pan.nameMatch)), done: !!pan.done } : null,
-    bank: (bank.masked || bank.accountLast4 || bank.upi || bank.done) ? { kind: str(pick(bank.kind, bank.method, bank.upi ? 'UPI' : 'Bank')), masked: str(pick(bank.masked, bank.accountMasked, bank.upiMasked, bank.accountLast4 && '••••' + bank.accountLast4)),
-      holder: str(pick(bank.holder, bank.accountHolderName, bank.nameAtBank)), ifsc: str(bank.ifsc), match: MATCH(pick(bank.match, bank.nameMatch)), done: !!bank.done } : null,
-    selfie: sf ? { liveness: lc(pick(sf.liveness, sf.livenessStatus)), faceMatch: num(pick(sf.faceMatch, sf.faceMatchScore, sf.score)) } : null,
-    socials: arr(pick(v.socials, v.socialAccounts, steps.socials)).map(s => ({ p: lc(pick(s.p, s.platform)), handle: str(pick(s.handle, s.username)), followers: num(pick(s.followers, s.followerCount)), linked: !!pick(s.linked, s.verified, s.isLinked), age: str(pick(s.age, s.accountAge)) })),
+    id_doc: has(I, 'type', 'masked', 'name', 'dob', 'uploadId', 'done') ? I : null,
+    pan: has(P, 'masked', 'name', 'done') ? P : null,
+    bank: has(B, 'masked', 'holder', 'ifsc', 'done') ? B : null,
+    selfie: sf ? { liveness: lc(pick(sf.liveness, sf.livenessStatus, sf.livenessResult)), faceMatch: num(pick(sf.faceMatch, sf.faceMatchScore, sf.matchScore, sf.score)) } : null,
+    socials: arr(pick(v.socials, v.socialAccounts, k.socials, steps.socials, A && A.socials, A && A.socialAccounts)).filter(obj).map(s => ({ p: lc(pick(s.p, s.platform)), handle: str(pick(s.handle, s.username)), followers: num(pick(s.followers, s.followerCount)), linked: !!pick(s.linked, s.verified, s.isLinked), age: str(pick(s.age, s.accountAge)) })),
     business: biz ? { legal: str(pick(biz.legal, biz.legalName)), gstin: str(biz.gstin), gstinStatus: str(pick(biz.gstinStatus, biz.gstStatus)), pan: str(pick(biz.pan, biz.panMasked)), panFromGstin: !!pick(biz.panFromGstin, biz.panMatchesGstin), cin: str(biz.cin) } : null,
     person: per ? { name: str(pick(per.name, per.fullName)), designation: str(pick(per.designation, per.title, per.role)), mail: str(pick(per.mail, per.email)), mailVerified: bool(per.mailVerified, per.emailVerified) } : null,
     billing: bill ? { address: str(pick(bill.address, bill.line1)), email: str(pick(bill.email, bill.billingEmail)) } : null,
-    checks: arr(v.checks), docs: arr(pick(v.documents, v.docs, v.files)).map((d, i) => ({ key: str(pick(d.id, d.key, i)), name: str(pick(d.label, d.name, d.type, d.kind, 'Document')), url: str(pick(d.url, d.downloadUrl, d.signedUrl)), expiresAt: str(d.expiresAt) })),
-    raw: v
+    checks: arr(v.checks), docs: arr(pick(v.documents, v.docs, v.files)).filter(obj).map((d, i) => ({ key: str(pick(d.id, d.key, i)), name: str(pick(d.label, d.name, d.type, d.kind, 'Document')), url: str(pick(d.url, d.downloadUrl, d.signedUrl)), expiresAt: str(d.expiresAt), uploadId: str(pick(d.uploadId, d.fileId)) })).filter(d => d.url || !d.uploadId),
+    /* uploaded files (ID, PAN, bank proof...) as { key, label, uploadId | url, selfie } */
+    images: [...imagesIn(v, 'request'), ...(A ? imagesIn(obj(A.kyc) || A, 'account') : [])].filter((x, i, a) => a.findIndex(y => y.key === x.key) === i),
+    raw: src, acc
   };
 }
 /* problems an admin must look at, read straight from the submission (design: vFlags) */

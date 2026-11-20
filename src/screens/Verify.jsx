@@ -8,14 +8,14 @@
    - POST /v1/admin/verifications/<id>/reject/        { reason, note }
    - POST /v1/admin/verifications/<id>/request-info/  { items: [...], message }
    Classes are .vfy-* (and .adm-*). */
-import { useEffect, useLayoutEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import L, { data } from '../lib/core.js';
 import { mo } from '../lib/mo.js';
 import { useRerender } from '../lib/hooks.js';
 import { api, can, num, pick, str } from '../lib/admin.js';
 import { refreshCounts } from '../lib/live.js';
-import { toVerification, toCreator, toBrand } from '../lib/model.js';
-import Av, { photoOf } from '../components/Av.jsx';
+import { toVerification, toCreator, toBrand, fieldsOf } from '../lib/model.js';
+import Av, { photoOf, mediaUrl } from '../components/Av.jsx';
 import Icon from '../components/Icon.jsx';
 import Lq from '../components/Lq.jsx';
 import { confirm } from '../components/Confirm.jsx';
@@ -216,12 +216,48 @@ function Docs({ v, reload }) {
   const open = async d => {
     if (d.url && (!d.expiresAt || Date.parse(d.expiresAt) > Date.now())) { window.open(d.url, '_blank', 'noopener'); return; }
     L.toast('That link has expired. Getting a fresh one…', 'clock');
-    try { const fresh = toVerification(await api.verification(v.id)); reload(fresh); const n = fresh.docs.find(x => x.key === d.key); n && n.url ? window.open(n.url, '_blank', 'noopener') : L.toast('The API gave no link for this document.', 'alert'); }
+    try { const fresh = toVerification(await api.verification(v.id), v.acc); reload(fresh); const n = fresh.docs.find(x => x.key === d.key); n && n.url ? window.open(n.url, '_blank', 'noopener') : L.toast('The API gave no link for this document.', 'alert'); }
     catch (e) { L.toast(errText(e), 'alert'); }
   };
   return <Card id="vfyDoc" ic="paperclip" title="Documents">
     <div className="stack">{v.docs.map(d => <Lq className="lq-s lq-sm" key={d.key} onClick={() => open(d)}><Icon n="eye" className="ic" />{d.name}</Lq>)}
       <p className="vfy-note">Links are signed and last 5 minutes; an expired one is fetched again.</p></div></Card>;
+}
+
+/* uploaded files (ID, PAN, bank proof...): an uploadId is turned into a signed link through /v1/uploads/<id>/download-url/ */
+function Thumb({ x, retry }) {
+  const [bad, setBad] = useState(false);
+  const pdf = /pdf/i.test(x.type || '') || /\.pdf(\?|$)/i.test(x.url || '');
+  if (x.err) return <li className="vfy-img is-err"><span className="vfy-img-f"><span className="vfy-img-doc"><Icon n="alert" />Not available</span></span><span className="vfy-img-c"><b>{x.label}</b><span className="muted">{x.err}</span></span></li>;
+  return <li className="vfy-img"><a href={x.url} target="_blank" rel="noopener noreferrer" className="vfy-img-f" aria-label={`Open ${x.label}`}>
+    {pdf || bad ? <span className="vfy-img-doc"><Icon n="file" />{pdf ? 'PDF' : 'Open file'}</span> : <img src={x.url} alt={x.label} loading="lazy" decoding="async" onError={() => setBad(true)} />}</a>
+    <span className="vfy-img-c"><b>{x.label}</b>{bad ? <button type="button" className="btn-q" onClick={retry}>Get a fresh link</button> : null}</span></li>;
+}
+function Images({ v }) {
+  const list = v.images.filter(x => !x.selfie), selfies = v.images.length - list.length;
+  const r = useLoad(() => Promise.all(list.map(x => (x.uploadId
+    ? api.fileUrl(x.uploadId).then(d => {
+      const url = mediaUrl(typeof d === 'string' ? d : str(d && pick(d.url, d.downloadUrl, d.signedUrl)));
+      return url ? { ...x, url, type: str(d && pick(d.contentType, d.mimeType, d.mime)) } : { ...x, err: 'The API gave no link for this file.' };
+    }, e => ({ ...x, err: errText(e) }))
+    : Promise.resolve(mediaUrl(x.url) ? { ...x, url: mediaUrl(x.url) } : { ...x, err: 'The link is not one the browser can open.' })))), [v.id, list.map(x => x.key).join('|')]);
+  if (v.kind === 'brand' && !list.length) return null;
+  return <Card id="vfyImg" ic="eye" title="Uploaded images">
+    {!list.length ? <p className="muted">The API sent no uploaded images for this request.</p>
+      : r.err ? <p className="muted">{errText(r.err)}</p>
+      : !r.data ? <p className="muted">Loading images…</p>
+      : <ul className="vfy-imgs">{r.data.map(x => <Thumb key={x.key + (x.url || '')} x={x} retry={r.reload} />)}</ul>}
+    {selfies ? <p className="vfy-note">The selfie photo stays private and is not shown here.</p> : null}
+    {list.length ? <p className="vfy-note">Links are signed and short-lived; reopen the request if one has expired.</p> : null}
+  </Card>;
+}
+/* everything the API sent for this request, so nothing the applicant entered is hidden by a field name the screen does not know */
+function AllFields({ v }) {
+  const rows = fieldsOf(v.raw);
+  if (!rows.length) return null;
+  return <Card id="vfyRaw" ic="info" title="Everything the API sent">
+    <details className="vfy-raw"><summary>{`Show all ${rows.length} fields`}</summary><Kvs rows={rows} /></details>
+    <p className="vfy-note">Full ID, PAN and account numbers are masked to the last 4 characters.</p></Card>;
 }
 
 const ITEMS = {
@@ -232,7 +268,16 @@ const KEYMAP = { id: 'id', pan: 'pan', bank: 'bank', face: 'selfie', soc: 'soc',
 
 function Detail({ id }) {
   const root = useRef(null);
-  const r = useLoad(() => api.verification(id).then(toVerification), [id]);
+  /* the request, plus the applicant's account record for whatever the request leaves out (details, photo, uploads) */
+  const r = useLoad(async () => {
+    const raw = await api.verification(id);
+    let v = toVerification(raw);
+    if (v && v.account) {
+      const acc = await (v.kind === 'brand' ? api.brand(v.account) : api.creator(v.account)).catch(() => null);
+      if (acc) v = toVerification(raw, acc);
+    }
+    return v;
+  }, [id]);
   const nx = useLoad(() => api.verifications({ status: 'pending' }).then(p => p.rows.map(toVerification)).catch(() => []), [id]);
   const v = r.data;
   useEffect(() => { if (v) document.title = v.name + ' · Verification · Linkloom'; }, [v && v.name]);
@@ -286,7 +331,7 @@ function Detail({ id }) {
     <div className="view-in vfy vfy-d" ref={root}>
       {back}
       <header className="vfy-mast">
-        <Av kind={v.kind} name={v.name} cls="vfy-av" src={photoOf(v.raw) || photoOf(v.raw && (v.raw.creator || v.raw.brand || v.raw.profile))} />
+        <Av kind={v.kind} name={v.name} cls="vfy-av" src={photoOf(v.raw) || photoOf(v.raw && (v.raw.creator || v.raw.brand || v.raw.profile)) || photoOf(v.acc)} />
         <div className="vfy-mast-t">
           <p className="vfy-mast-k"><Kind k={v.kind} /><span>{v.kind === 'brand' ? 'Brand verification' : 'Creator KYC'}</span>{accHref ? <a className="btn-q" href={accHref}>View account</a> : <span>No account yet</span>}</p>
           <h1 className="t-h1">{v.name}</h1>
@@ -300,7 +345,7 @@ function Detail({ id }) {
         {next ? <Lq as="a" className="lq-p lq-sm" href={`#verify-${next.id}`}>{`Next: ${next.name}`}</Lq> : <Lq as="a" className="lq-s lq-sm" href="#verify">Back to the desk</Lq>}</div> : null}
       {pr.length ? <section className="vfy-probs" aria-label="Needs your attention">{pr.map((x, i) => <div className={'vfy-prob' + (x.block ? ' is-block' : '')} key={i}><span className="vfy-prob-i"><Icon n={x.block ? 'alert' : 'info'} /></span><div><p className="vfy-prob-h">{x.h}</p><p>{x.d}{x.go ? <> <a className="btn-q" href={x.go}>Open brand</a></> : null}</p></div></div>)}</section> : null}
       <ul className="vfy-sigs vfy-sigs--lg" aria-label="Checks">{c.map(x => <li className={`vfy-sig is-${x.ok}`} key={x.k}><span className="vfy-sig-i"><Icon n={sigIc(x.ok)} /></span><span className="vfy-sig-t"><b>{x.n}</b><span>{x.t}</span></span></li>)}</ul>
-      <div className="vfy-cards">{v.kind === 'creator' ? <CreatorBody v={v} /> : <BrandBody v={v} />}<Docs v={v} reload={d => r.set(d)} /></div>
+      <div className="vfy-cards">{v.kind === 'creator' ? <CreatorBody v={v} /> : <BrandBody v={v} />}<Images v={v} /><Docs v={v} reload={d => r.set(d)} /><AllFields v={v} /></div>
       {pending ? <div className="vfy-dock" role="region" aria-label="Decision">
         <p className="vfy-dock-t">{!can('verify') ? <><Icon n="lock" /><span>Deciding needs the Super admin or Trust &amp; safety role.</span></>
           : block ? <><Icon n="alert" /><span>{`Approve is off: ${pr.find(x => x.block).h.replace(/:.*/, '').toLowerCase()}.`}</span></>
